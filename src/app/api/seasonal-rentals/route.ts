@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
+import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/seasonalRentals";
 
 const expenseSchema = z.object({
   description: z.string().min(1),
@@ -19,55 +20,12 @@ const createSchema = z.object({
   expenses: z.array(expenseSchema).default([]),
 });
 
-const PLATFORM_LABEL: Record<string, string> = { AIRBNB: "Airbnb", BOOKING: "Booking" };
-
-function serializeWithComputed(rental: {
-  id: string;
-  platform: string;
-  checkIn: Date;
-  checkOut: Date;
-  netAmountReceived: unknown;
-  cleaningFee: unknown;
-  notes: string | null;
-  createdAt: Date;
-  davidSettlementId: string | null;
-  familiaSettlementId: string | null;
-  transactionId: string | null;
-  expenses: { id: string; description: string; amount: unknown }[];
-}) {
-  const netAmountReceived = Number(rental.netAmountReceived);
-  const cleaningFee = Number(rental.cleaningFee);
-  const expenses = rental.expenses.map((e) => ({ ...e, amount: Number(e.amount) }));
-  const extrasTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
-  const computed = computeRental({
-    checkIn: rental.checkIn,
-    checkOut: rental.checkOut,
-    netAmountReceived,
-    cleaningFee,
-    extrasTotal,
-  });
-  return {
-    id: rental.id,
-    platform: rental.platform,
-    checkIn: rental.checkIn,
-    checkOut: rental.checkOut,
-    netAmountReceived,
-    cleaningFee,
-    notes: rental.notes,
-    createdAt: rental.createdAt,
-    isDavidSettled: rental.davidSettlementId !== null,
-    isFamiliaSettled: rental.familiaSettlementId !== null,
-    expenses,
-    computed,
-  };
-}
-
 export async function GET() {
   const rentals = await prisma.seasonalRental.findMany({
     include: { expenses: true },
     orderBy: { checkIn: "desc" },
   });
-  return NextResponse.json(rentals.map(serializeWithComputed));
+  return NextResponse.json(rentals.map(serializeRentalWithComputed));
 }
 
 export async function POST(request: Request) {
@@ -107,7 +65,7 @@ export async function POST(request: Request) {
   const incomeTransaction = await prisma.transaction.create({
     data: {
       date: addDays(checkOut, 1),
-      description: `Repasse aluguel de temporada (${PLATFORM_LABEL[data.platform]} ${data.checkIn}–${data.checkOut})`,
+      description: `Repasse aluguel de temporada (${RENTAL_PLATFORM_LABEL[data.platform]} ${data.checkIn}–${data.checkOut})`,
       amount: computed.totalDavid,
       type: "INCOME",
       source: "IMPORT",
@@ -121,5 +79,5 @@ export async function POST(request: Request) {
     include: { expenses: true },
   });
 
-  return NextResponse.json(serializeWithComputed(updated), { status: 201 });
+  return NextResponse.json(serializeRentalWithComputed(updated), { status: 201 });
 }

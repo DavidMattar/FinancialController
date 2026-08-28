@@ -1,12 +1,14 @@
 "use client";
 
-// Modal (janela sobreposta) para registrar um novo aluguel de temporada
+// Modal (janela sobreposta) para registrar OU editar um aluguel de temporada
 // (Airbnb ou Booking). Enquanto o usuário digita, o formulário consulta a API
 // de preview para mostrar em tempo real os valores calculados: 10% do David
 // (mínimo garantido — nunca cai abaixo disso mesmo se o aluguel saiu mais
 // barato que a tabela), o valor de tabela, e o valor líquido para distribuição
-// entre a família. Ao salvar, o backend também cria automaticamente uma
-// transação de receita (Total David) na categoria "Aluguel Rancho".
+// entre a família. Ao criar, o backend também cria automaticamente uma
+// transação de receita (Total David) na categoria "Aluguel Rancho"; ao editar
+// (mesmo um aluguel já com repasse fechado), essa mesma transação é
+// atualizada com o novo valor — o repasse já fechado em si não muda.
 
 import { useEffect, useState } from "react";
 import { formatBRL } from "@/lib/format";
@@ -14,6 +16,19 @@ import { formatBRL } from "@/lib/format";
 interface ExpenseRow {
   description: string;
   amount: string;
+}
+
+/** Dados mínimos de um aluguel existente necessários para pré-preencher o formulário de edição. */
+interface RentalToEdit {
+  id: string;
+  platform: "AIRBNB" | "BOOKING";
+  checkIn: string;
+  checkOut: string;
+  netAmountReceived: number;
+  cleaningFee: number;
+  isDavidSettled: boolean;
+  isFamiliaSettled: boolean;
+  expenses: { description: string; amount: number }[];
 }
 
 /** Formato devolvido por POST /api/seasonal-rentals/preview — os mesmos números que serão salvos ao confirmar. */
@@ -30,21 +45,30 @@ interface Preview {
 }
 
 interface Props {
+  /** Quando informado, o modal abre em modo de edição, pré-preenchido com estes dados. */
+  rental?: RentalToEdit;
   onClose: () => void;
-  /** Chamado depois que o aluguel é salvo com sucesso, para o componente pai recarregar a lista. */
-  onCreated: () => void;
+  /** Chamado depois que o aluguel é criado ou salvo com sucesso, para o componente pai recarregar a lista. */
+  onSaved: () => void;
 }
 
-export default function SeasonalRentalModal({ onClose, onCreated }: Props) {
-  const [platform, setPlatform] = useState<"AIRBNB" | "BOOKING">("AIRBNB");
-  const [checkIn, setCheckIn] = useState("");
-  const [checkOut, setCheckOut] = useState("");
-  const [netAmountReceived, setNetAmountReceived] = useState("");
-  const [cleaningFee, setCleaningFee] = useState("");
+export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props) {
+  const isEditing = rental !== undefined;
+  const [platform, setPlatform] = useState<"AIRBNB" | "BOOKING">(rental?.platform ?? "AIRBNB");
+  // checkIn/checkOut chegam da API como string ISO ("YYYY-MM-DDT...") — o
+  // input type="date" espera só os 10 primeiros caracteres ("YYYY-MM-DD").
+  const [checkIn, setCheckIn] = useState(rental ? rental.checkIn.slice(0, 10) : "");
+  const [checkOut, setCheckOut] = useState(rental ? rental.checkOut.slice(0, 10) : "");
+  const [netAmountReceived, setNetAmountReceived] = useState(rental ? String(rental.netAmountReceived) : "");
+  const [cleaningFee, setCleaningFee] = useState(rental ? String(rental.cleaningFee) : "");
   // Vira true assim que o usuário edita manualmente o campo de limpeza — a
   // partir daí o valor sugerido pela API deixa de sobrescrever o que foi digitado.
-  const [cleaningFeeTouched, setCleaningFeeTouched] = useState(false);
-  const [expenses, setExpenses] = useState<ExpenseRow[]>([]);
+  // Ao editar um aluguel existente já começa true, para não sobrescrever o
+  // valor de limpeza já salvo com a sugestão padrão da tabela.
+  const [cleaningFeeTouched, setCleaningFeeTouched] = useState(isEditing);
+  const [expenses, setExpenses] = useState<ExpenseRow[]>(
+    rental ? rental.expenses.map((e) => ({ description: e.description, amount: String(e.amount) })) : []
+  );
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -108,15 +132,15 @@ export default function SeasonalRentalModal({ onClose, onCreated }: Props) {
     setExpenses((prev) => prev.filter((_, i) => i !== index));
   }
 
-  /** Envia o formulário para POST /api/seasonal-rentals, criando o registro do aluguel. */
+  /** Envia o formulário para POST (criar) ou PUT (editar) /api/seasonal-rentals. */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!checkIn || !checkOut || !netAmountReceived) return;
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch("/api/seasonal-rentals", {
-        method: "POST",
+      const res = await fetch(isEditing ? `/api/seasonal-rentals/${rental.id}` : "/api/seasonal-rentals", {
+        method: isEditing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           platform,
@@ -134,7 +158,7 @@ export default function SeasonalRentalModal({ onClose, onCreated }: Props) {
         setError(data.error ? JSON.stringify(data.error) : "Erro ao salvar o aluguel.");
         return;
       }
-      onCreated();
+      onSaved();
     } finally {
       setSubmitting(false);
     }
@@ -147,7 +171,16 @@ export default function SeasonalRentalModal({ onClose, onCreated }: Props) {
         onClick={(e) => e.stopPropagation()}
         className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-5 shadow-lg space-y-4"
       >
-        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Novo registro de aluguel</h2>
+        <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+          {isEditing ? "Editar aluguel" : "Novo registro de aluguel"}
+        </h2>
+
+        {isEditing && (rental.isDavidSettled || rental.isFamiliaSettled) && (
+          <p className="text-xs bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-md px-2 py-1.5">
+            Este aluguel já teve repasse gerado. O valor do repasse já fechado não muda, mas o Total David
+            será recalculado e a transação de crédito vinculada será atualizada com o novo valor.
+          </p>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <div className="flex flex-col gap-1 col-span-2">
@@ -295,7 +328,7 @@ export default function SeasonalRentalModal({ onClose, onCreated }: Props) {
             disabled={submitting || !preview}
             className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
           >
-            {submitting ? "Salvando..." : "Salvar registro"}
+            {submitting ? "Salvando..." : isEditing ? "Salvar alterações" : "Salvar registro"}
           </button>
         </div>
       </form>

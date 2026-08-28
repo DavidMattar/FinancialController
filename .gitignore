@@ -1,0 +1,26 @@
+# Dependências
+/node_modules
+
+# Build do Next.js
+/.next/
+/out/
+/build
+
+# Prisma Client gerado (prisma generate recria a partir do schema)
+/src/generated/
+
+# Variáveis de ambiente (contém DATABASE_URL com credenciais)
+.env
+.env*.local
+
+# Tipos gerados automaticamente pelo Next.js
+next-env.d.ts
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor/OS
+.DS_Store
+*.pem

@@ -124,6 +124,16 @@ SeasonalRental ──> SeasonalRentalExpense
   para nunca serem contados de novo. **Não existe UI de cancelar/desfazer
   repasse — foi pedida e depois explicitamente retirada pelo usuário.
   Não adicione essa funcionalidade a menos que seja pedida de novo.**
+- **Editar um `SeasonalRental` já é permitido mesmo depois de repassado**
+  (botão "editar" por aluguel em `SeasonalRentalsSection`, `PUT
+  /api/seasonal-rentals/[id]`). Isso é diferente de desfazer um repasse:
+  o `RentalSettlement.totalAmount` já fechado continua congelado — só o
+  registro do aluguel em si é atualizado. Se o novo `totalDavid`
+  calculado mudar, a `Transaction` de receita vinculada
+  (`transactionId`) é atualizada com o novo valor/data/descrição na
+  mesma chamada, para o ledger principal continuar batendo com o
+  aluguel. Os gastos extras (`SeasonalRentalExpense`) são substituídos
+  por completo a cada edição (delete + recreate), não casados por id.
 - Relatório de WhatsApp (`src/lib/whatsappReport.ts`) é **por aluguel
   individual**, não por período — cada aluguel na lista tem seu próprio
   botão. Formatação usa `*texto*` para negrito (convenção do WhatsApp).

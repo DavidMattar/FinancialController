@@ -50,7 +50,9 @@ const PLATFORM_LABEL: Record<Rental["platform"], string> = {
 export default function SeasonalRentalsSection() {
   const [rentals, setRentals] = useState<Rental[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showModal, setShowModal] = useState(false);
+  // "new" abre o modal de criação; um Rental abre o modal já preenchido para
+  // editar aquele aluguel específico; null mantém o modal fechado.
+  const [modalTarget, setModalTarget] = useState<"new" | Rental | null>(null);
   const [showSettlementModal, setShowSettlementModal] = useState(false);
   // Guarda qual aluguel terá seu relatório de WhatsApp exibido (null = modal fechado).
   const [whatsAppRental, setWhatsAppRental] = useState<Rental | null>(null);
@@ -94,7 +96,7 @@ export default function SeasonalRentalsSection() {
             </button>
             <button
               type="button"
-              onClick={() => setShowModal(true)}
+              onClick={() => setModalTarget("new")}
               className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700"
             >
               + Novo registro de aluguel
@@ -144,6 +146,15 @@ export default function SeasonalRentalsSection() {
                       className="text-xs text-emerald-600 dark:text-emerald-400 hover:underline"
                     >
                       WhatsApp
+                    </button>
+                    {/* Edita somente este aluguel — inclusive se já tiver repasse (David
+                        e/ou Família) fechado; ver aviso e lógica no próprio modal. */}
+                    <button
+                      type="button"
+                      onClick={() => setModalTarget(r)}
+                      className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      editar
                     </button>
                     <button
                       type="button"
@@ -214,11 +225,12 @@ export default function SeasonalRentalsSection() {
         )}
       </CollapsibleSection>
 
-      {showModal && (
+      {modalTarget && (
         <SeasonalRentalModal
-          onClose={() => setShowModal(false)}
-          onCreated={() => {
-            setShowModal(false);
+          rental={modalTarget === "new" ? undefined : modalTarget}
+          onClose={() => setModalTarget(null)}
+          onSaved={() => {
+            setModalTarget(null);
             load();
           }}
         />
