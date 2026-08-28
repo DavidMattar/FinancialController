@@ -220,6 +220,17 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
    explícitas — não "normalize" isso adicionando relações Prisma.
 7. Repasses de aluguel são permanentes por design (ver 4.2) — não
    adicione cancelamento sem pedido explícito novo do usuário.
+8. **`.gitignore` existe na raiz do projeto** (criado em 2026-08-28,
+   antes disso o repositório não tinha nenhum) e ignora `node_modules`,
+   `.next`, `src/generated` (Prisma Client gerado) e `.env`. Se algum
+   desses aparecer como "untracked" no `git status`, é esperado — não
+   são para entrar no repositório.
+9. **O `git config user.name`/`user.email` deste repositório é local**
+   (configurado só dentro de `X:\FinancialController\.git\config`, sem
+   `--global`) como `DavidMattar` / `dasmat2000@gmail.com`, para não
+   afetar a identidade Git global da máquina em outros projetos. Não
+   rode `git config --global` para "corrigir" autoria — o repo-local já
+   resolve isso.
 
 ## 6. Padrão de código a seguir em novas features
 
@@ -255,7 +266,8 @@ src/app/
     views/                                → filtros salvos do dashboard
     budget/summary/                       → orçamento 15/10/75 do mês corrente
     family-transactions/                  → ledger isolado da família
-    seasonal-rentals/, seasonal-rentals/preview/  → aluguéis de temporada
+    seasonal-rentals/, seasonal-rentals/preview/,
+    seasonal-rentals/[id]/ (GET não existe, só PUT/DELETE) → aluguéis de temporada
     rental-settlements/, rental-settlements/preview/ → repasses David/Família
   categorias/, transacoes/, transacoes-familia/,
   receitas/, investimentos/, relatorios/,
@@ -292,6 +304,7 @@ src/lib/
   rentalPriceTable.ts                     → tabela de preços + calendário de feriados
   rentalCalc.ts                           → fórmulas de repasse (computeRental)
   rentalSettlements.ts                    → previewSettlement/createSettlement (David/Família)
+  seasonalRentals.ts                      → serializeRentalWithComputed/RENTAL_PLATFORM_LABEL (compartilhado entre as rotas de seasonal-rentals)
   whatsappReport.ts                       → geração de relatório formatado para WhatsApp
 
 prisma/
