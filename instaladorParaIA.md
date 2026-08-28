@@ -140,6 +140,23 @@ Abra `http://localhost:3000`. Se a porta 3000 já estiver ocupada por
 outro processo, o Next.js sobe automaticamente em 3001, 3002, etc. —
 **confira a porta impressa no terminal**, não assuma que é sempre 3000.
 
+⚠️ Isso vale inclusive quando quem ocupa a 3000 é **outro `next dev`**:
+nesse caso ele imprime `Another next dev server is already running`
+(com o PID e a pasta do servidor existente) e sobe na porta seguinte.
+Ou seja, é possível ficar com dois servidores no ar ao mesmo tempo
+servindo **código diferente** — e olhar a tela do errado. Nesta máquina
+o risco é concreto porque existe uma **segunda cópia do projeto em
+`C:\financialSupport`**, apontando para o MESMO banco
+(`financial_support`); o `X:` é um disco físico distinto, não um
+mapeamento de `C:`. Antes de concluir que uma alteração "não
+funcionou", confirme de qual pasta veio o servidor da porta:
+
+```powershell
+Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
+  Where-Object { $_.CommandLine -match 'next' } |
+  Select-Object ProcessId, CommandLine | Format-List
+```
+
 ## 5. Armadilhas conhecidas (leia antes de programar/depurar)
 
 Estas são coisas que já causaram erro real durante o desenvolvimento
@@ -205,6 +222,20 @@ deste projeto. Evite repeti-las.
    preços conserta retroativamente todos os registros antigos. Não
    adicione uma coluna para "cachear" esse valor.
 
+   A **única** coisa de precificação que fica salva é
+   `SeasonalRental.nightRateOverrides` (Json `{ "YYYY-MM-DD": valor }`):
+   as diárias que o usuário customizou naquele aluguel específico, pela
+   lista "Valores das diárias" do modal de edição. Isso **não** é cache
+   de cálculo — é uma entrada informada pelo usuário. Só as noites
+   presentes no mapa saem da tabela; as ausentes continuam seguindo
+   `rentalPriceTable.ts` e continuam se corrigindo retroativamente. Não
+   remova esse campo achando que ele viola a regra acima, e ao criar
+   qualquer caminho novo que calcule um aluguel, repasse os overrides
+   para `computeRental()` (hoje: `serializeRentalWithComputed`, as rotas
+   de `seasonal-rentals` e `rentalSettlements.findUnsettledRentals` — se
+   o repasse ignorar os overrides, ele fecha um valor diferente do Total
+   David exibido no próprio aluguel).
+
 ## 6. Dependências externas (as únicas chamadas fora da máquina local)
 
 O app é local-first, mas duas cotações em tempo real exigem chamada de
@@ -233,7 +264,9 @@ mostrar preço atual.
   estaduais de Minas Gerais nem municipais de Belo Horizonte (só
   feriados nacionais, calculados via algoritmo de Meeus/Jones/Butcher
   para a Páscoa) — a fonte original (PDF da tabela de preços) não
-  especificava essas datas.
+  especificava essas datas. Existe uma saída manual: no modal de editar
+  o aluguel, a lista "Valores das diárias" permite ajustar a diária
+  daquela noite específica só naquele aluguel (ver armadilha 8).
 - Não há autenticação/login — o app assume um único usuário local.
 
 ## 8. Comandos úteis (resumo rápido)
