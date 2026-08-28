@@ -1,0 +1,299 @@
+// Gera o Prisma Client usando o novo formato "prisma-client" (Prisma 7),
+// que produz um client baseado em ESM/adapters em vez do client clássico
+// "@prisma/client". O código de saída vai para src/generated/prisma —
+// esse é o import usado em toda a aplicação (@/generated/prisma/client).
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+// A partir do Prisma 7, o datasource não guarda mais a URL de conexão
+// diretamente (isso foi removido). A URL (DATABASE_URL, do arquivo .env)
+// é passada em tempo de execução para o "driver adapter" (ver src/lib/prisma.ts),
+// não fica mais fixa aqui no schema.
+datasource db {
+  provider = "postgresql"
+}
+
+/// Tipo de uma Categoria: EXPENSE (categoria de despesa) ou INCOME (categoria de receita).
+enum CategoryKind {
+  EXPENSE
+  INCOME
+}
+
+/// Tipo de uma Transação:
+/// - EXPENSE: uma despesa (dinheiro saindo).
+/// - INCOME: uma receita (dinheiro entrando).
+/// - PAYMENT: pagamento de fatura de cartão de crédito (não conta como despesa nova).
+enum TransactionType {
+  EXPENSE
+  INCOME
+  PAYMENT
+}
+
+/// De onde a transação veio:
+/// - MANUAL: o usuário digitou/criou a transação na tela.
+/// - IMPORT: a transação foi criada automaticamente por uma importação
+///   (fatura de cartão, nota fiscal/NFC-e, ou repasse de aluguel de temporada).
+enum TransactionSource {
+  MANUAL
+  IMPORT
+}
+
+/// Seção da fatura de cartão de onde a transação foi extraída (ver
+/// src/lib/invoiceParsers/types.ts para a explicação completa de cada valor).
+enum InvoiceSection {
+  DESPESA
+  CREDITO
+  PARCELAMENTO
+}
+
+/// Tipo de investimento monitorado na página de Investimentos:
+/// CRYPTO (criptomoeda, cotação via CoinGecko) ou CURRENCY (moeda estrangeira,
+/// cotação via open.er-api.com).
+enum InvestmentType {
+  CRYPTO
+  CURRENCY
+}
+
+/// Tipo de lançamento no ledger "Transações Família" (EXPENSE/INCOME).
+/// Não usa o mesmo enum TransactionType de propósito, para reforçar que
+/// FamilyTransaction é um modelo totalmente separado do resto do app.
+enum FamilyTransactionType {
+  EXPENSE
+  INCOME
+}
+
+/// Plataforma pela qual o aluguel de temporada foi feito.
+enum RentalPlatform {
+  AIRBNB
+  BOOKING
+}
+
+/// Uma categoria de despesa ou receita (ex: "Alimentação", "Salário",
+/// "Aluguel Rancho"). Usada para classificar transações e para o cálculo
+/// do orçamento 15%/10%/75%.
+model Category {
+  id           String            @id @default(cuid())
+  name         String            @unique
+  color        String            @default("#6366f1")
+  icon         String            @default("tag")
+  kind         CategoryKind      @default(EXPENSE)
+  /// Palavras-chave usadas na categorização automática de lançamentos
+  /// importados (ver src/lib/categorize.ts).
+  keywords     String[]          @default([])
+  /// Sub-itens padrão sugeridos ao detalhar uma transação dessa categoria
+  /// (ex: itens fixos de uma fatura de cartão).
+  fixedSubItems String[]         @default([])
+  /// Se true, o valor dessa categoria é subtraído do "disponível para gastar"
+  /// mesmo sendo uma despesa fixa/planejada (ver regra do orçamento 15/10/75).
+  deductsFromFreeSpend Boolean   @default(false)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  transactions Transaction[]
+}
+
+/// Um cartão de crédito cadastrado (banco + titular + últimos 4 dígitos).
+/// Usado para associar faturas importadas e suas transações ao cartão certo,
+/// já que uma fatura em PDF pode conter lançamentos de vários titulares.
+model CreditCard {
+  id          String        @id @default(cuid())
+  bank        String
+  holderName  String
+  lastDigits  String
+  createdAt   DateTime      @default(now())
+  invoices    Invoice[]
+  transactions Transaction[]
+
+  // Evita importar a mesma fatura (mesmo cartão + mês) duas vezes.
+  @@unique([bank, holderName, lastDigits])
+}
+
+/// Uma fatura de cartão de crédito importada de um PDF. Guarda os totais
+/// "oficiais" informados pelo banco (totalAmount, minPayment) além dos
+/// dados de controle da importação (fileName, importedAt).
+model Invoice {
+  id              String        @id @default(cuid())
+  creditCardId    String
+  creditCard      CreditCard    @relation(fields: [creditCardId], references: [id], onDelete: Cascade)
+  referenceMonth  String
+  closingDate     DateTime?
+  dueDate         DateTime?
+  totalAmount     Decimal       @db.Decimal(12, 2)
+  minPayment      Decimal?      @db.Decimal(12, 2)
+  previousBalance Decimal?      @db.Decimal(12, 2)
+  fileName        String
+  importedAt      DateTime      @default(now())
+  transactions    Transaction[]
+
+  // Uma fatura por cartão por mês de referência — impede reimportação duplicada.
+  @@unique([creditCardId, referenceMonth])
+}
+
+/// O lançamento financeiro central do app: toda despesa, receita ou
+/// pagamento de fatura, seja digitado manualmente ou importado (fatura de
+/// cartão, NFC-e, ou repasse automático de aluguel de temporada).
+model Transaction {
+  id                String            @id @default(cuid())
+  date              DateTime
+  description       String
+  amount            Decimal           @db.Decimal(12, 2)
+  currency          String            @default("BRL")
+  amountUsd         Decimal?          @db.Decimal(12, 2)
+  type              TransactionType   @default(EXPENSE)
+  section           InvoiceSection?
+  installmentCurrent Int?
+  installmentTotal   Int?
+  source            TransactionSource @default(MANUAL)
+  categoryId        String?
+  category          Category?         @relation(fields: [categoryId], references: [id])
+  creditCardId      String?
+  creditCard        CreditCard?       @relation(fields: [creditCardId], references: [id])
+  invoiceId         String?
+  invoice           Invoice?          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  notes             String?
+  // Marca uma despesa como "aguardando reembolso/devolução" (ex: compra que
+  // será estornada). Usado pelo painel de pendências no dashboard.
+  pendingReturn     Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  items             TransactionItem[]
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([type])
+  @@index([pendingReturn])
+}
+
+/// Um "sub-item" de detalhamento de uma transação (ex: dividir uma compra de
+/// supermercado em itens específicos). Puramente informativo — a soma dos
+/// itens não precisa bater com o valor da transação.
+model TransactionItem {
+  id            String      @id @default(cuid())
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  description   String
+  amount        Decimal     @db.Decimal(12, 2)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([transactionId])
+}
+
+/// Uma posição de investimento acompanhada na página de Investimentos
+/// (uma cripto ou uma moeda estrangeira). O preço atual NÃO é guardado
+/// aqui — é buscado em tempo real (CoinGecko/open.er-api.com) e combinado
+/// com quantity/avgCostBrl na hora de exibir o valor e o lucro/prejuízo.
+model InvestmentHolding {
+  id           String         @id @default(cuid())
+  type         InvestmentType
+  symbol       String
+  name         String
+  quantity     Decimal        @db.Decimal(20, 8)
+  avgCostBrl   Decimal        @db.Decimal(14, 2)
+  notes        String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  // Só pode existir uma posição por combinação tipo+símbolo (ex: um único
+  // holding de "CRYPTO BTC"); compras adicionais somam na mesma posição.
+  @@unique([type, symbol])
+}
+
+/// Um conjunto de filtros do dashboard/relatórios salvo pelo usuário para
+/// reaplicar depois com um clique (ex: "Últimos 3 meses - só despesas").
+/// `filters` guarda o filtro inteiro como JSON livre, sem precisar de
+/// colunas específicas para cada tipo de filtro.
+model DashboardView {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  filters   Json
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// Fully isolated household ledger — intentionally has no relation to
+/// Category/CreditCard/Invoice/Transaction, and must never be joined into
+/// any metrics, reports, or budget calculations of the main ledger.
+model FamilyTransaction {
+  id          String                @id @default(cuid())
+  date        DateTime
+  description String
+  amount      Decimal               @db.Decimal(12, 2)
+  type        FamilyTransactionType @default(EXPENSE)
+  notes       String?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  @@index([date])
+  @@index([type])
+}
+
+/// Short-term ("temporada") rental income tracker, shown as a collapsible
+/// section on the Receitas page. "tableValue" (reference nightly-rate total)
+/// is intentionally NOT stored — it's recomputed live from
+/// src/lib/rentalPriceTable.ts on every read, so future corrections to that
+/// price table retroactively apply to past records too.
+model SeasonalRental {
+  id                String                   @id @default(cuid())
+  platform          RentalPlatform
+  checkIn           DateTime
+  checkOut          DateTime
+  netAmountReceived Decimal                  @db.Decimal(12, 2)
+  cleaningFee       Decimal                  @db.Decimal(12, 2) @default(0)
+  notes             String?
+  // Soft reference to the auto-generated income Transaction (Total David),
+  // not a Prisma relation — keeps the main Transaction model untouched.
+  transactionId       String?
+  // David and Família settlements are independent tracks — a rental can be
+  // closed for one without being closed for the other, hence two separate
+  // nullable FKs into the same RentalSettlement table.
+  davidSettlementId   String?
+  davidSettlement     RentalSettlement?       @relation("DavidSettlementRentals", fields: [davidSettlementId], references: [id])
+  familiaSettlementId String?
+  familiaSettlement   RentalSettlement?       @relation("FamiliaSettlementRentals", fields: [familiaSettlementId], references: [id])
+  createdAt           DateTime                 @default(now())
+  updatedAt           DateTime                 @updatedAt
+  expenses            SeasonalRentalExpense[]
+
+  @@index([checkIn])
+  @@index([checkOut])
+}
+
+enum RentalSettlementType {
+  DAVID
+  FAMILIA
+}
+
+/// A "closing"/payout record for either track:
+/// - DAVID: sum of "Total David" for matching rentals.
+/// - FAMILIA: sum of "Valor líquido para distribuição" for matching rentals,
+///   divided by 2 at the end (split between the two family members).
+/// Generating one links the matching rentals to it (davidSettlementId or
+/// familiaSettlementId, depending on `type`) so they aren't counted again.
+model RentalSettlement {
+  id             String               @id @default(cuid())
+  type           RentalSettlementType
+  periodFrom     DateTime
+  periodTo       DateTime
+  totalAmount    Decimal              @db.Decimal(12, 2)
+  rentalCount    Int
+  createdAt      DateTime             @default(now())
+  davidRentals   SeasonalRental[]     @relation("DavidSettlementRentals")
+  familiaRentals SeasonalRental[]     @relation("FamiliaSettlementRentals")
+}
+
+/// Um item de gasto extra associado a um aluguel específico (ex: reposição de
+/// algo danificado, taxa extra cobrada do hóspede). Entra no cálculo de
+/// "extrasTotal" em src/lib/rentalCalc.ts e aparece no relatório de WhatsApp.
+model SeasonalRentalExpense {
+  id               String         @id @default(cuid())
+  seasonalRentalId String
+  seasonalRental   SeasonalRental @relation(fields: [seasonalRentalId], references: [id], onDelete: Cascade)
+  description      String
+  amount           Decimal        @db.Decimal(12, 2)
+  createdAt        DateTime       @default(now())
+
+  @@index([seasonalRentalId])
+}
