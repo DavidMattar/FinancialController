@@ -31,9 +31,13 @@ interface Rental {
   isDavidSettled: boolean;
   isFamiliaSettled: boolean;
   expenses: RentalExpense[];
+  /** Diárias customizadas só deste aluguel: { "YYYY-MM-DD": valor }. Vazio = tudo pela tabela. */
+  nightRateOverrides: Record<string, number>;
   computed: {
     nights: number;
     tableValue: number;
+    /** true quando alguma noite deste aluguel usa diária customizada em vez da tabela. */
+    hasCustomNightRates: boolean;
     davidTenPercent: number;
     extrasTotal: number;
     extraTableValue: number;
@@ -190,7 +194,19 @@ export default function SeasonalRentalsSection() {
                     </span>
                   </p>
                   <p className="flex justify-between sm:flex-col sm:justify-start">
-                    <span className="text-slate-500 dark:text-slate-400">Valor de tabela</span>
+                    <span className="text-slate-500 dark:text-slate-400">
+                      Valor de tabela
+                      {/* Aviso de que este aluguel tem diária(s) customizada(s) — sem isso
+                          o valor pareceria divergir da tabela de preços sem explicação. */}
+                      {r.computed.hasCustomNightRates && (
+                        <span
+                          title="Este aluguel tem diárias customizadas (editáveis no botão 'editar')"
+                          className="ml-1 text-amber-600 dark:text-amber-400"
+                        >
+                          ✎
+                        </span>
+                      )}
+                    </span>
                     <span className="text-slate-900 dark:text-slate-100 font-medium">
                       {formatBRL(r.computed.tableValue)}
                     </span>

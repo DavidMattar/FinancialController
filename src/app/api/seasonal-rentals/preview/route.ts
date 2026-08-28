@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
-import { suggestCleaningFee } from "@/lib/rentalPriceTable";
+import { sanitizeNightRateOverrides, suggestCleaningFee } from "@/lib/rentalPriceTable";
 
 const previewSchema = z.object({
   checkIn: z.string(),
@@ -10,6 +10,9 @@ const previewSchema = z.object({
   netAmountReceived: z.number().nonnegative(),
   cleaningFee: z.number().nonnegative().default(0),
   extrasTotal: z.number().nonnegative().default(0),
+  // Diárias customizadas deste aluguel: { "YYYY-MM-DD": valor }. Opcional —
+  // sem elas o preview usa a tabela de preços normal para todas as noites.
+  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
 });
 
 /**
@@ -22,6 +25,12 @@ const previewSchema = z.object({
  * ele é sempre recalculado a partir de src/lib/rentalPriceTable.ts, para que uma
  * correção futura na tabela de preços "Tabela Rancho" se reflita automaticamente
  * em todos os alugueis (passados e futuros), sem precisar migrar dados antigos.
+ *
+ * A exceção são as diárias customizadas (`nightRateOverrides`), que o usuário
+ * define por aluguel na tela de edição: essas SÃO salvas, noite a noite, e
+ * substituem a tabela apenas naquele registro. O `computed.nightRates` da
+ * resposta traz o detalhamento de cada noite (valor de tabela x valor aplicado),
+ * que é o que a lista editável de diárias do modal exibe.
  */
 export async function POST(request: Request) {
   const body = await request.json();
@@ -43,6 +52,9 @@ export async function POST(request: Request) {
     netAmountReceived: data.netAmountReceived,
     cleaningFee: data.cleaningFee,
     extrasTotal: data.extrasTotal,
+    // Descarta diárias customizadas de noites que não pertencem mais ao período
+    // (acontece quando o usuário muda as datas depois de customizar).
+    nightRateOverrides: sanitizeNightRateOverrides(data.nightRateOverrides, checkIn, checkOut),
   });
 
   return NextResponse.json({ ...computed, suggestedCleaningFee: suggestCleaningFee() });

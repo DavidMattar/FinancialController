@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
+import { sanitizeNightRateOverrides } from "@/lib/rentalPriceTable";
 import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/seasonalRentals";
 
 const expenseSchema = z.object({
@@ -18,6 +19,11 @@ const updateSchema = z.object({
   cleaningFee: z.number().nonnegative().default(0),
   notes: z.string().nullable().optional(),
   expenses: z.array(expenseSchema).default([]),
+  // Diárias customizadas SÓ deste aluguel: { "YYYY-MM-DD": valor }. Como a
+  // lista de gastos extras, é substituída por completo a cada edição — o
+  // formulário sempre envia o mapa inteiro, e um mapa vazio significa
+  // "voltar a usar a tabela de preços em todas as noites".
+  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
 });
 
 /**
@@ -28,7 +34,10 @@ const updateSchema = z.object({
  * registro do aluguel em si e a Transaction de receita vinculada
  * (`transactionId`, o "Total David") são atualizados, para refletir a
  * correção nas telas que leem o aluguel/transação a partir de agora.
- * Substitui a lista de gastos extras por completo (delete + recreate).
+ * Substitui a lista de gastos extras por completo (delete + recreate) e, do
+ * mesmo jeito, substitui por completo o mapa de diárias customizadas
+ * (`nightRateOverrides`) — é por aí que o usuário ajusta o valor da diária de
+ * um aluguel específico sem mexer na tabela de preços nem em outros aluguéis.
  */
 export async function PUT(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -47,12 +56,16 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   const checkIn = parseLocalDate(data.checkIn);
   const checkOut = parseLocalDate(data.checkOut);
   const extrasTotal = data.expenses.reduce((sum, e) => sum + e.amount, 0);
+  // Diárias customizadas de noites que saíram do período (usuário mudou as
+  // datas depois de customizar) são descartadas em vez de ficarem órfãs no Json.
+  const nightRateOverrides = sanitizeNightRateOverrides(data.nightRateOverrides, checkIn, checkOut);
   const computed = computeRental({
     checkIn,
     checkOut,
     netAmountReceived: data.netAmountReceived,
     cleaningFee: data.cleaningFee,
     extrasTotal,
+    nightRateOverrides,
   });
 
   // Substitui os gastos extras por completo em vez de tentar casar por id —
@@ -68,6 +81,7 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       netAmountReceived: data.netAmountReceived,
       cleaningFee: data.cleaningFee,
       notes: data.notes ?? null,
+      nightRateOverrides,
       expenses: { create: data.expenses },
     },
     include: { expenses: true },

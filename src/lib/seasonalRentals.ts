@@ -1,4 +1,5 @@
 import { computeRental } from "./rentalCalc";
+import type { NightRateOverrides } from "./rentalPriceTable";
 
 /** Rótulo de exibição de cada plataforma de aluguel de temporada. */
 export const RENTAL_PLATFORM_LABEL: Record<string, string> = { AIRBNB: "Airbnb", BOOKING: "Booking" };
@@ -11,11 +12,30 @@ interface SeasonalRentalRecord {
   netAmountReceived: unknown;
   cleaningFee: unknown;
   notes: string | null;
+  /** Json livre do banco — ver `readNightRateOverrides`. */
+  nightRateOverrides?: unknown;
   createdAt: Date;
   davidSettlementId: string | null;
   familiaSettlementId: string | null;
   transactionId: string | null;
   expenses: { id: string; description: string; amount: unknown }[];
+}
+
+/**
+ * Lê o campo Json `SeasonalRental.nightRateOverrides` como um mapa
+ * "YYYY-MM-DD" -> valor da diária. Como é um Json livre (pode ser null, e nos
+ * registros criados antes desta feature sempre é), qualquer coisa fora do
+ * formato esperado é tratada como "sem diária customizada" em vez de quebrar
+ * o cálculo do aluguel.
+ */
+export function readNightRateOverrides(value: unknown): NightRateOverrides {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: NightRateOverrides = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    const amount = Number(raw);
+    if (Number.isFinite(amount) && amount >= 0) result[key] = amount;
+  }
+  return result;
 }
 
 /**
@@ -29,12 +49,14 @@ export function serializeRentalWithComputed(rental: SeasonalRentalRecord) {
   const cleaningFee = Number(rental.cleaningFee);
   const expenses = rental.expenses.map((e) => ({ ...e, amount: Number(e.amount) }));
   const extrasTotal = expenses.reduce((sum, e) => sum + e.amount, 0);
+  const nightRateOverrides = readNightRateOverrides(rental.nightRateOverrides);
   const computed = computeRental({
     checkIn: rental.checkIn,
     checkOut: rental.checkOut,
     netAmountReceived,
     cleaningFee,
     extrasTotal,
+    nightRateOverrides,
   });
   return {
     id: rental.id,
@@ -44,6 +66,9 @@ export function serializeRentalWithComputed(rental: SeasonalRentalRecord) {
     netAmountReceived,
     cleaningFee,
     notes: rental.notes,
+    // Devolvido separado do `computed.nightRates` porque é exatamente o que o
+    // formulário de edição precisa reenviar no PUT (só as noites customizadas).
+    nightRateOverrides,
     createdAt: rental.createdAt,
     isDavidSettled: rental.davidSettlementId !== null,
     isFamiliaSettled: rental.familiaSettlementId !== null,

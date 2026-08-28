@@ -25,6 +25,75 @@ function dateKey(date: Date): string {
 }
 
 /**
+ * Chave "YYYY-MM-DD" (data local, sem horário) de uma noite. É o formato usado
+ * nas chaves de `SeasonalRental.nightRateOverrides` — propositalmente o mesmo
+ * formato de um `<input type="date">`, para o JSON salvo continuar legível e
+ * poder ser comparado direto com o que vem do formulário.
+ */
+export function nightKey(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/** Qual regra da tabela de preços definiu a tarifa de uma noite. */
+export type NightRateKind = "HOLIDAY" | "HIGH_SEASON" | "LOW_SEASON";
+
+/**
+ * Diárias customizadas de UM aluguel específico: mapa de `nightKey()` para o
+ * valor em reais daquela noite. Cada noite listada aqui substitui a tarifa da
+ * tabela apenas naquele aluguel; as noites ausentes seguem a tabela normal.
+ */
+export type NightRateOverrides = Record<string, number>;
+
+/** Uma noite da estadia, com a tarifa da tabela e a tarifa realmente aplicada. */
+export interface NightRate {
+  /** Data da noite (meia-noite no horário local). */
+  date: Date;
+  /** Chave "YYYY-MM-DD" desta noite — é a chave usada em `NightRateOverrides`. */
+  key: string;
+  /** Tarifa que a tabela de preços define para esta noite (nunca alterada por override). */
+  tableRate: number;
+  /** Tarifa efetivamente usada no cálculo: o override, se houver, senão `tableRate`. */
+  rate: number;
+  /** true quando esta noite tem um valor customizado neste aluguel. */
+  isOverridden: boolean;
+  /** Regra da tabela que gerou `tableRate` (feriado / alta / baixa temporada). */
+  kind: NightRateKind;
+  /** true se é uma "noite de fim de semana" (começa sexta, sábado ou domingo). */
+  isWeekend: boolean;
+}
+
+/**
+ * Filtra um mapa de diárias customizadas, mantendo só as noites que realmente
+ * pertencem à estadia informada e cujo valor é um número válido (>= 0).
+ *
+ * Serve para o caso em que o usuário customiza diárias e depois muda o
+ * check-in/check-out: as noites que saíram do período não devem continuar
+ * salvas no banco. Também protege o Json contra qualquer coisa fora do
+ * formato esperado, já que é um campo livre.
+ */
+export function sanitizeNightRateOverrides(
+  overrides: NightRateOverrides | null | undefined,
+  checkIn: Date,
+  checkOut: Date
+): NightRateOverrides {
+  if (!overrides) return {};
+  const validKeys = new Set<string>();
+  const nights = nightsBetween(checkIn, checkOut);
+  for (let i = 0; i < nights; i++) validKeys.add(nightKey(addDays(checkIn, i)));
+
+  const clean: NightRateOverrides = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    if (!validKeys.has(key)) continue;
+    const amount = Number(value);
+    if (!Number.isFinite(amount) || amount < 0) continue;
+    clean[key] = amount;
+  }
+  return clean;
+}
+
+/**
  * Quantidade de noites de uma estadia. Uma "noite" vai das 8h de um dia até
  * as 12h do dia seguinte (regra do próprio negócio) — por isso é contada por
  * noite (diferença de dias entre check-in e check-out), nunca por dia
@@ -120,33 +189,79 @@ function holidayPricedNightKeys(year: number): Set<string> {
 }
 
 /**
- * Calcula o "valor de tabela" de uma estadia: percorre cada noite entre o
- * check-in e o check-out e soma a tarifa aplicável (feriado > alta temporada
- * > baixa temporada, sempre distinguindo dia de semana de fim de semana).
- * Este é o valor de referência usado por `computeRental` para descobrir se
- * o valor líquido recebido ficou acima ou abaixo da tabela.
+ * Detalha noite por noite o preço de uma estadia: para cada noite entre o
+ * check-in e o check-out, qual tarifa a tabela aplica (feriado > alta
+ * temporada > baixa temporada, sempre distinguindo dia de semana de fim de
+ * semana) e qual tarifa é realmente usada no cálculo.
+ *
+ * `overrides` são as diárias customizadas de UM aluguel específico (ver
+ * `SeasonalRental.nightRateOverrides`): uma noite listada ali usa o valor
+ * customizado, uma noite ausente usa a tabela. `tableRate` continua sendo
+ * devolvido mesmo nas noites customizadas, para a tela poder mostrar de
+ * quanto era o valor original e oferecer "restaurar".
  */
-export function computeTableValue(checkIn: Date, checkOut: Date): number {
+export function computeNightRates(
+  checkIn: Date,
+  checkOut: Date,
+  overrides?: NightRateOverrides | null
+): NightRate[] {
   const nights = nightsBetween(checkIn, checkOut);
-  if (nights <= 0) return 0;
+  if (nights <= 0) return [];
 
   const years = new Set<number>();
   for (let i = 0; i < nights; i++) years.add(addDays(checkIn, i).getFullYear());
   const holidayKeys = new Set<string>();
   for (const y of years) for (const k of holidayPricedNightKeys(y)) holidayKeys.add(k);
 
-  let total = 0;
+  const result: NightRate[] = [];
   for (let i = 0; i < nights; i++) {
     const night = addDays(checkIn, i);
+    const isWeekend = isWeekendNight(night);
+    let kind: NightRateKind;
+    let tableRate: number;
     if (holidayKeys.has(dateKey(night))) {
-      total += HOLIDAY_NIGHT_RATE;
+      kind = "HOLIDAY";
+      tableRate = HOLIDAY_NIGHT_RATE;
     } else if (isHighSeason(night)) {
-      total += isWeekendNight(night) ? HIGH_SEASON_WEEKEND_RATE : HIGH_SEASON_WEEKDAY_RATE;
+      kind = "HIGH_SEASON";
+      tableRate = isWeekend ? HIGH_SEASON_WEEKEND_RATE : HIGH_SEASON_WEEKDAY_RATE;
     } else {
-      total += isWeekendNight(night) ? LOW_SEASON_WEEKEND_RATE : LOW_SEASON_WEEKDAY_RATE;
+      kind = "LOW_SEASON";
+      tableRate = isWeekend ? LOW_SEASON_WEEKEND_RATE : LOW_SEASON_WEEKDAY_RATE;
     }
+
+    const key = nightKey(night);
+    const override = overrides?.[key];
+    const isOverridden = typeof override === "number" && Number.isFinite(override);
+    result.push({
+      date: night,
+      key,
+      tableRate,
+      rate: isOverridden ? override : tableRate,
+      isOverridden,
+      kind,
+      isWeekend,
+    });
   }
-  return total;
+  return result;
+}
+
+/**
+ * Calcula o "valor de tabela" de uma estadia: a soma da tarifa de cada noite
+ * (ver `computeNightRates`). Este é o valor de referência usado por
+ * `computeRental` para descobrir se o valor líquido recebido ficou acima ou
+ * abaixo da tabela.
+ *
+ * Com `overrides`, as noites customizadas daquele aluguel entram na soma com o
+ * valor customizado em vez do valor da tabela — é assim que um aluguel pode ter
+ * seu cálculo ajustado sem afetar nenhum outro registro.
+ */
+export function computeTableValue(
+  checkIn: Date,
+  checkOut: Date,
+  overrides?: NightRateOverrides | null
+): number {
+  return computeNightRates(checkIn, checkOut, overrides).reduce((sum, n) => sum + n.rate, 0);
 }
 
 /** Valor de limpeza sugerido para preencher o formulário de novo aluguel (fixo, mas editável pelo usuário). */

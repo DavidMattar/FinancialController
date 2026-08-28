@@ -1,6 +1,7 @@
 import { prisma } from "./prisma";
 import { parseLocalDate, parseLocalDateEndOfDay } from "./dateOnly";
 import { computeRental } from "./rentalCalc";
+import { readNightRateOverrides } from "./seasonalRentals";
 
 /**
  * Existem DUAS trilhas de repasse independentes para o mesmo conjunto de
@@ -43,6 +44,10 @@ async function findUnsettledRentals(type: SettlementType, from: string, to: stri
       netAmountReceived,
       cleaningFee,
       extrasTotal,
+      // Se o aluguel tem diárias customizadas, o repasse tem que usar as
+      // mesmas — senão o valor fechado aqui não bateria com o Total David
+      // mostrado no próprio aluguel.
+      nightRateOverrides: readNightRateOverrides(rental.nightRateOverrides),
     });
     return {
       id: rental.id,

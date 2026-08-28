@@ -243,6 +243,14 @@ model SeasonalRental {
   netAmountReceived Decimal                  @db.Decimal(12, 2)
   cleaningFee       Decimal                  @db.Decimal(12, 2) @default(0)
   notes             String?
+  /// Diárias customizadas SÓ deste aluguel, no formato { "YYYY-MM-DD": valor }
+  /// (uma chave por noite, do check-in até a noite anterior ao check-out).
+  /// Cada noite presente aqui substitui a tarifa da tabela de preços
+  /// (rentalPriceTable.ts) apenas neste registro — as noites ausentes
+  /// continuam seguindo a tabela e, portanto, continuam se corrigindo
+  /// retroativamente quando a tabela muda. É um Json livre (e não uma tabela
+  /// relacionada) porque é sempre lido e gravado inteiro, como um bloco só.
+  nightRateOverrides Json?
   // Soft reference to the auto-generated income Transaction (Total David),
   // not a Prisma relation — keeps the main Transaction model untouched.
   transactionId       String?

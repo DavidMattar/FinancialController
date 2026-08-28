@@ -93,6 +93,31 @@ SeasonalRental ──> SeasonalRentalExpense
   salvo no banco** — sempre recalculado a partir de `checkIn`/`checkOut`
   na hora da leitura. Uma correção futura na tabela de preços conserta
   retroativamente todos os registros antigos.
+- **Diárias customizadas por aluguel (`SeasonalRental.nightRateOverrides`).**
+  Único dado de precificação que É salvo: um `Json?` no formato
+  `{ "YYYY-MM-DD": valor }`, uma chave por noite. Cada noite listada ali
+  substitui a tarifa da tabela **somente naquele aluguel**; as noites
+  ausentes continuam seguindo a tabela e continuam se corrigindo
+  retroativamente. Editado na lista "Valores das diárias" do modal de
+  edição (`SeasonalRentalModal`), que mostra noite a noite o valor da
+  tabela, o valor aplicado e um "restaurar" por linha.
+  - `computeNightRates()` (`rentalPriceTable.ts`) é a fonte desse
+    detalhamento; `computeTableValue()` virou a soma dele. Todo caminho
+    que calcula um aluguel precisa repassar os overrides — hoje:
+    `serializeRentalWithComputed`, as rotas de `seasonal-rentals`
+    (POST/PUT/preview) e `rentalSettlements.findUnsettledRentals`
+    (se o repasse ignorasse os overrides, fecharia um valor diferente
+    do Total David exibido no próprio aluguel).
+  - Como o mapa de gastos extras, é **substituído por completo** a cada
+    edição (mapa vazio = todas as noites voltam para a tabela), e
+    `sanitizeNightRateOverrides()` descarta noites fora do período —
+    necessário porque o usuário pode customizar diárias e depois mudar
+    o check-in/check-out.
+  - É um Json livre, e não uma tabela relacionada, porque é sempre lido
+    e gravado inteiro, como um bloco (mesmo motivo de
+    `DashboardView.filters`). Registros criados antes desta feature têm
+    `null` — `readNightRateOverrides()` trata isso (e qualquer conteúdo
+    fora do formato) como "sem customização".
 - Fórmulas (`computeRental()`):
   ```
   davidTenPercent  = netAmountReceived * 0.10
@@ -225,12 +250,24 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
    `.next`, `src/generated` (Prisma Client gerado) e `.env`. Se algum
    desses aparecer como "untracked" no `git status`, é esperado — não
    são para entrar no repositório.
-9. **O `git config user.name`/`user.email` deste repositório é local**
-   (configurado só dentro de `X:\FinancialController\.git\config`, sem
-   `--global`) como `DavidMattar` / `dasmat2000@gmail.com`, para não
-   afetar a identidade Git global da máquina em outros projetos. Não
-   rode `git config --global` para "corrigir" autoria — o repo-local já
-   resolve isso.
+9. **Existe uma segunda cópia do projeto em `C:\financialSupport`** (o
+   `X:` é um disco físico distinto, não um mapeamento de `C:`). As duas
+   cópias apontam para o MESMO banco (`financial_support`), então é
+   perfeitamente possível estar olhando uma tela servida pela cópia
+   errada e concluir que uma alteração "não funcionou". Antes de
+   depurar, confirme de qual pasta o servidor da porta 3000 veio:
+   `Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+   Where-Object { $_.CommandLine -match 'next' } | Select CommandLine`.
+   Detalhe agravante: o `next dev` do Next 16 **não falha** quando a
+   3000 está ocupada por outro `next dev` — ele avisa e sobe na 3001,
+   então dá para ficar com dois servidores de código diferente no ar ao
+   mesmo tempo.
+10. **O `git config user.name`/`user.email` deste repositório é local**
+    (configurado só dentro de `X:\FinancialController\.git\config`, sem
+    `--global`) como `DavidMattar` / `dasmat2000@gmail.com`, para não
+    afetar a identidade Git global da máquina em outros projetos. Não
+    rode `git config --global` para "corrigir" autoria — o repo-local já
+    resolve isso.
 
 ## 6. Padrão de código a seguir em novas features
 
@@ -240,7 +277,10 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
 - **Cálculos derivados nunca são cacheados no banco** quando dependem de
   uma regra de negócio que pode mudar (ex: `tableValue`, orçamento
   15/10/75) — sempre recompute a partir da fonte primária no momento da
-  leitura.
+  leitura. O que pode ser salvo é uma **entrada** que o usuário
+  informou explicitamente para aquele registro (ex:
+  `nightRateOverrides` — a diária que ele mesmo definiu naquele
+  aluguel), nunca o resultado do cálculo.
 - **Categorização por `Category.keywords[]`** (case-insensitive contra a
   descrição) é o padrão de auto-categorização usado na importação —
   reaproveite `src/lib/categorize.ts` em vez de criar lógica paralela.
@@ -301,7 +341,7 @@ src/lib/
   useIsDark.ts                            → hook de detecção de tema dark/light
   invoiceParsers/{types,index,santander}.ts → parser de fatura por banco (registro extensível)
   receiptParsers/{types,index,nfce}.ts    → parser de nota fiscal por formato (registro extensível)
-  rentalPriceTable.ts                     → tabela de preços + calendário de feriados
+  rentalPriceTable.ts                     → tabela de preços + calendário de feriados + detalhamento por noite (computeNightRates) e diárias customizadas (sanitizeNightRateOverrides)
   rentalCalc.ts                           → fórmulas de repasse (computeRental)
   rentalSettlements.ts                    → previewSettlement/createSettlement (David/Família)
   seasonalRentals.ts                      → serializeRentalWithComputed/RENTAL_PLATFORM_LABEL (compartilhado entre as rotas de seasonal-rentals)

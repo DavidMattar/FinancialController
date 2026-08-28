@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
+import { sanitizeNightRateOverrides } from "@/lib/rentalPriceTable";
 import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/seasonalRentals";
 
 const expenseSchema = z.object({
@@ -18,6 +19,10 @@ const createSchema = z.object({
   cleaningFee: z.number().nonnegative().default(0),
   notes: z.string().nullable().optional(),
   expenses: z.array(expenseSchema).default([]),
+  // Diárias customizadas SÓ deste aluguel: { "YYYY-MM-DD": valor }. Cada noite
+  // informada aqui substitui a tarifa da tabela de preços apenas neste
+  // registro (ver SeasonalRental.nightRateOverrides no schema).
+  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
 });
 
 export async function GET() {
@@ -38,6 +43,8 @@ export async function POST(request: Request) {
   const checkIn = parseLocalDate(data.checkIn);
   const checkOut = parseLocalDate(data.checkOut);
   const extrasTotal = data.expenses.reduce((sum, e) => sum + e.amount, 0);
+  // Só as noites que realmente pertencem ao período são salvas.
+  const nightRateOverrides = sanitizeNightRateOverrides(data.nightRateOverrides, checkIn, checkOut);
 
   const computed = computeRental({
     checkIn,
@@ -45,6 +52,7 @@ export async function POST(request: Request) {
     netAmountReceived: data.netAmountReceived,
     cleaningFee: data.cleaningFee,
     extrasTotal,
+    nightRateOverrides,
   });
 
   const rental = await prisma.seasonalRental.create({
@@ -55,6 +63,7 @@ export async function POST(request: Request) {
       netAmountReceived: data.netAmountReceived,
       cleaningFee: data.cleaningFee,
       notes: data.notes ?? null,
+      nightRateOverrides,
       expenses: { create: data.expenses },
     },
     include: { expenses: true },
