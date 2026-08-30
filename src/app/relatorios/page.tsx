@@ -5,10 +5,15 @@
  * categorias (checkboxes) e ver totais/gráfico apenas dessas categorias, além
  * de exportar o resultado filtrado como CSV. Útil para análises pontuais que
  * não cabem no dashboard padrão.
+ *
+ * No fim da página fica também o bloco de backup/restauração do banco inteiro
+ * (`BackupPanel`) — separado do relatório porque não tem nada a ver com o
+ * período/categorias filtrados acima: é uma ferramenta de manutenção dos dados.
  */
 import { useEffect, useMemo, useState } from "react";
 import DateRangePicker from "@/components/DateRangePicker";
 import CategoryPieChart, { type CategorySlice } from "@/components/CategoryPieChart";
+import BackupPanel from "@/components/BackupPanel";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
 import { formatBRL } from "@/lib/format";
 import type { Category } from "@/lib/types";
@@ -182,6 +187,8 @@ export default function RelatoriosPage() {
           </>
         )}
       </div>
+
+      <BackupPanel />
     </div>
   );
 }

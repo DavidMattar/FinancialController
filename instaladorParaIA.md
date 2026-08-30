@@ -19,7 +19,9 @@ sem backend em nuvem, um único usuário), com as seguintes áreas:
   Temporada" (Airbnb/Booking) com cálculo de repasse.
 - Categorias (`/categorias`) — CRUD de categorias.
 - Investimentos (`/investimentos`) — cripto/moeda com cotação ao vivo.
-- Relatórios (`/relatorios`) — gráficos e regra de orçamento 15/10/75.
+- Relatórios (`/relatorios`) — gráficos e regra de orçamento 15/10/75, e
+  no fim da página um bloco separado de **backup/restauração** de todos
+  os dados em JSON (ver seção 8).
 - Importar fatura (`/importar-fatura`) — importação de fatura de cartão
   (PDF) e de nota fiscal/NFC-e (PDF ou texto colado).
 
@@ -117,6 +119,12 @@ essa permissão (princípio de menor privilégio), use sempre `db push`
 para sincronizar o schema neste projeto. Não crie migrations com
 `migrate dev` a menos que troque para um papel com `CREATEDB` só para
 esse comando.
+
+> Numa instalação já em uso, **gere um backup antes de rodar `db push`**:
+> abra `/relatorios` e clique em "Baixar backup (JSON)" no bloco do fim da
+> página, ou
+> `curl http://localhost:3000/api/backup/export -o backup.json`.
+> Ver seção 8.
 
 ### 4.5. Popular categorias padrão (seed)
 
@@ -236,6 +244,42 @@ deste projeto. Evite repeti-las.
    o repasse ignorar os overrides, ele fecha um valor diferente do Total
    David exibido no próprio aluguel).
 
+9. **Não existe banco de testes isolado nesta instalação, e não dá para
+   criar um** (checado em 2026-08-29). Duas barreiras somadas:
+   - O papel `finance_app` não tem `CREATEDB` (decisão do passo 4.2) e só
+     tem permissão de `CREATE` no próprio `financial_support`, então não há
+     como criar um banco separado com as credenciais do app.
+   - Criar um **schema** separado no mesmo banco (`CREATE SCHEMA zztest` +
+     `prisma db push` com a URL apontando para ele) **não isola nada**: com
+     driver adapter o Prisma emite SQL qualificado com o schema do
+     datasource (`"public"."Transaction"`), então nem `?schema=zztest` na
+     URL nem `search_path` (via `?options=-c%20search_path%3Dzztest`) mudam
+     onde as queries caem — o app continua lendo e escrevendo em `public`.
+     O `prisma db push` até cria as tabelas no schema novo, o que dá a
+     falsa impressão de que funcionou.
+
+   Consequência prática: testar qualquer coisa destrutiva significa mexer
+   nos dados reais. Gere um backup antes (seção 8) e, quando possível,
+   prefira testes que só **inserem** registros com um prefixo de `id`
+   próprio (ex: `zztest-…`), fáceis de apagar depois.
+
+10. **O Next carrega `.env.local` com prioridade sobre `.env`** — e
+    sobrescreve até variáveis já definidas no `process.env` do processo que
+    chamou o `next dev` (ou seja, `$env:DATABASE_URL = ...; npx next dev`
+    **não** vence o `.env`). Se criar um `.env.local` para um teste, apague-o
+    depois: senão o app fica apontando para outro banco sem nenhum aviso na
+    tela. O `.gitignore` já cobre `.env*.local`, então ele não vai para o
+    repositório.
+
+    Armadilha dobrada no PowerShell 5.1: `Set-Content -Encoding utf8`
+    escreve **BOM**, e o BOM entra no nome da primeira variável
+    (`﻿DATABASE_URL`), que passa a ser silenciosamente ignorada — o
+    arquivo parece certo em qualquer editor. Escreva sem BOM:
+
+    ```powershell
+    [System.IO.File]::WriteAllText($path, $texto, (New-Object System.Text.UTF8Encoding($false)))
+    ```
+
 ## 6. Dependências externas (as únicas chamadas fora da máquina local)
 
 O app é local-first, mas duas cotações em tempo real exigem chamada de
@@ -269,7 +313,39 @@ mostrar preço atual.
   daquela noite específica só naquele aluguel (ver armadilha 8).
 - Não há autenticação/login — o app assume um único usuário local.
 
-## 8. Comandos úteis (resumo rápido)
+## 8. Backup e restauração dos dados (sem passar pelo banco)
+
+Como não existe backup em nuvem (o app é local-first), o próprio app faz
+backup completo em JSON. Isso é o que permite mexer no schema/banco com
+rede de segurança, sem precisar de `pg_dump`/`psql`.
+
+**Onde fica:** bloco no fim da página `/relatorios`, com as duas opções.
+
+| Ação | Pela tela | Por linha de comando |
+|---|---|---|
+| Fazer backup | "Baixar backup (JSON)" | `curl http://localhost:3000/api/backup/export -o backup.json` |
+| Restaurar (substituir tudo) | escolher o arquivo → "Substituir tudo" | `curl -X POST "http://localhost:3000/api/backup/restore?mode=replace" -H "Content-Type: application/json" --data-binary @backup.json` |
+| Restaurar (só o que falta) | escolher o arquivo → "Só adicionar o que falta" | idem, com `mode=merge` |
+
+O que é bom saber antes de confiar nisso:
+
+- O arquivo cobre **todas as 11 tabelas** e preserva os `id` (cuid), então
+  as ligações entre os registros continuam valendo depois de restaurar — e
+  restaurar o mesmo arquivo duas vezes não duplica nada.
+- `mode` é **obrigatório** e não tem padrão, de propósito: é uma operação
+  destrutiva demais para o servidor adivinhar a intenção.
+- A restauração roda inteira em **uma transação do Postgres**: ou aplica
+  tudo, ou o banco fica exatamente como estava. Vale inclusive para o
+  `replace`, cujo primeiro passo é apagar tudo.
+- A restauração **não recria** valores derivados, porque eles nunca são
+  salvos (ver armadilha 8): restaurar um backup antigo com uma tabela de
+  preços nova é seguro e esperado.
+- Não é substituto de `pg_dump` para um desastre de servidor — é para
+  desfazer uma mudança de dados/schema feita por você.
+- Detalhes de formato e das decisões de design: `src/lib/backup.ts` e a
+  seção 4.8 do `contexto.md`.
+
+## 9. Comandos úteis (resumo rápido)
 
 ```bash
 npm install              # instala dependências
@@ -281,4 +357,7 @@ npm run build             # build de produção
 npm run start             # roda o build de produção
 npm run lint               # ESLint
 npx tsc --noEmit           # checagem de tipos sem gerar arquivos
+
+# backup de todos os dados em JSON (com o servidor rodando) — ver seção 8
+curl http://localhost:3000/api/backup/export -o backup.json
 ```

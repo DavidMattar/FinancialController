@@ -29,7 +29,7 @@ arquivo deve responder.
 | `/receitas` | `src/app/receitas/page.tsx` | Receitas do mês + seção "Aluguéis de Temporada" (colapsável). |
 | `/categorias` | `src/app/categorias/page.tsx` | CRUD de categorias (cor, ícone, palavras-chave, flags). |
 | `/investimentos` | `src/app/investimentos/page.tsx` | Holdings de cripto/moeda com cotação ao vivo. |
-| `/relatorios` | `src/app/relatorios/page.tsx` | Gráficos de tendência mensal + regra de orçamento 15/10/75. |
+| `/relatorios` | `src/app/relatorios/page.tsx` | Gráficos de tendência mensal + regra de orçamento 15/10/75. No fim da página, bloco separado de **backup/restauração** do banco inteiro (seção 4.8). |
 | `/importar-fatura` | `src/app/importar-fatura/page.tsx` | Duas abas: importar fatura de cartão (PDF) e nota fiscal/NFC-e (PDF ou texto colado). |
 | `src/app/layout.tsx` | — | Layout raiz: `Nav`, tema (dark/light), fontes. |
 
@@ -218,6 +218,59 @@ SeasonalRental ──> SeasonalRentalExpense
 - Preço atual nunca é salvo no `InvestmentHolding` — é buscado ao vivo e
   combinado com `quantity`/`avgCostBrl` na exibição.
 
+### 4.8. Backup e restauração em JSON (`src/lib/backup.ts`, `/api/backup/*`)
+- Bloco no fim de `/relatorios` (`BackupPanel`), separado do relatório de
+  propósito: não tem relação com o período/categorias filtrados acima, é
+  ferramenta de manutenção dos dados. Motivo de existir: o app é local-first
+  e sem nuvem, então o usuário precisa de um jeito de fazer um retrato dos
+  dados antes de mexer em algo que afete o banco e voltar atrás **sem passar
+  pelo PostgreSQL** (`pg_dump`/`psql`).
+- **Os `id` (cuid) são preservados** no arquivo e na restauração. É isso que
+  mantém as relações (categoria da transação, fatura do lançamento, aluguel do
+  gasto extra, repasse do aluguel) e o que torna a restauração idempotente:
+  aplicar o mesmo arquivo duas vezes não duplica nada.
+- **`GET /api/backup/export`** devolve todas as 11 tabelas (`findMany()` sem
+  `include`, só escalares + colunas de FK) num JSON indentado, com
+  `Content-Disposition: attachment` (mesmo padrão do CSV de transações).
+  `Decimal` sai como string e `Date` como timestamp ISO completo — é o que o
+  `JSON.stringify` faz com os tipos do Prisma, e é o que a restauração espera
+  de volta.
+- **`POST /api/backup/restore?mode=replace|merge`** recebe o arquivo inteiro
+  como corpo. `mode` é obrigatório e **não tem padrão de propósito** — é
+  destrutivo demais para adivinhar a intenção.
+  - `replace`: apaga tudo e insere o arquivo (a restauração de verdade).
+  - `merge`: mantém o banco e insere só o que falta (`skipDuplicates`, que
+    cobre tanto `id` repetido quanto os índices únicos). Para recuperar algo
+    apagado sem perder o que foi lançado depois do backup.
+- **Tudo roda em UMA transação do Postgres** (`timeout` de 120s, bem acima do
+  padrão de 5s do Prisma): ou aplica inteiro, ou o banco fica exatamente como
+  estava. Isso é essencial no `replace`, cujo primeiro passo é apagar tudo.
+- Duas ordens importam e estão explícitas no código: inserção pai→filho
+  (`insertBackup`) e exclusão filho→pai (`wipeAll`). Em particular
+  `RentalSettlement` entra **antes** de `SeasonalRental`, porque é o aluguel
+  que aponta para o repasse. O `wipeAll` apaga cada tabela explicitamente em
+  vez de confiar em `onDelete: Cascade`, para a ordem ficar visível e não
+  mudar de comportamento junto com o schema.
+- **Nada é recalculado na restauração** — o backup guarda só o que o banco
+  guarda. Valores derivados (`tableValue`, orçamento 15/10/75, cotação de
+  investimento) continuam sendo recalculados na leitura, então restaurar um
+  backup antigo já com uma tabela de preços nova é seguro e esperado
+  (é a mesma regra da seção 6).
+- `new Date()` é usado aqui sem passar por `dateOnly.ts` e **isso está
+  correto**: as datas do arquivo são timestamps ISO completos (`...T03:00:00.000Z`),
+  que já carregam o instante exato. A armadilha de fuso da seção 5.2 vale para
+  strings de data pura ("YYYY-MM-DD"), que não aparecem no backup.
+- O `updatedAt` do arquivo é respeitado na inserção (verificado): o
+  `@updatedAt` do Prisma só preenche o campo quando ele não é informado, então
+  um registro restaurado mantém a data de modificação original.
+- O painel valida o arquivo **no navegador** e mostra um resumo (data de
+  geração + contagem por tabela) antes de qualquer gravação — é o mesmo padrão
+  de import em duas etapas da seção 6.
+- Se um dia o formato mudar de forma incompatível, incremente
+  `BACKUP_FORMAT_VERSION`; a rota recusa arquivo com versão maior que a que
+  ela entende. Cada tabela é opcional no schema zod (padrão `[]`), então
+  backup gerado antes de um model novo existir continua restaurável.
+
 ## 5. Convenções e armadilhas técnicas (ver detalhe completo em `instaladorParaIA.md` seção 5)
 
 Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
@@ -268,6 +321,25 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
     afetar a identidade Git global da máquina em outros projetos. Não
     rode `git config --global` para "corrigir" autoria — o repo-local já
     resolve isso.
+11. **Não existe banco de testes isolado, e não dá para criar um** (checado
+    em 2026-08-29). O papel `finance_app` não tem `CREATEDB` e só tem
+    permissão de `CREATE` no próprio `financial_support`. E criar um *schema*
+    separado (`create schema zztest` + `prisma db push` apontando para ele)
+    **não isola nada**: com driver adapter o Prisma emite SQL qualificado com
+    o schema do datasource (`"public"."Transaction"`), então nem `?schema=` na
+    URL nem `search_path` via `?options=-c%20search_path%3D...` mudam onde as
+    queries caem — o app continua lendo `public`. Consequência prática: testar
+    qualquer coisa destrutiva significa mexer nos dados reais. Gere um backup
+    por `/relatorios` (seção 4.8) antes, e prefira testes que só inserem
+    (registros com id de prefixo próprio, fáceis de apagar depois).
+12. **O Next carrega `.env.local` com prioridade sobre `.env`** (e sobre
+    variáveis já definidas no `process.env` do processo que chamou o
+    `next dev`). Se você criar um `.env.local` para um teste, apague-o depois —
+    senão o app fica apontando para outro lugar sem nenhum aviso. Armadilha
+    dobrada no PowerShell 5.1: `Set-Content -Encoding utf8` escreve **BOM**, e
+    o BOM entra no nome da primeira variável (`\uFEFFDATABASE_URL`), que passa
+    a ser silenciosamente ignorada. Use
+    `[System.IO.File]::WriteAllText(path, texto, (New-Object System.Text.UTF8Encoding($false)))`.
 
 ## 6. Padrão de código a seguir em novas features
 
@@ -309,6 +381,7 @@ src/app/
     seasonal-rentals/, seasonal-rentals/preview/,
     seasonal-rentals/[id]/ (GET não existe, só PUT/DELETE) → aluguéis de temporada
     rental-settlements/, rental-settlements/preview/ → repasses David/Família
+    backup/export/, backup/restore/       → backup completo do banco em JSON (seção 4.8)
   categorias/, transacoes/, transacoes-familia/,
   receitas/, investimentos/, relatorios/,
   importar-fatura/                        → páginas (uma pasta por rota)
@@ -325,6 +398,7 @@ src/components/                           → um componente de UI por arquivo
   SeasonalRentalModal, SeasonalRentalsSection,
   SettlementModal, RentalWhatsAppModal    → feature de aluguel de temporada
   InvoiceImportPanel, ReceiptImportPanel  → importação (2 abas de /importar-fatura)
+  BackupPanel                             → bloco de backup/restauração no fim de /relatorios
 
 src/lib/
   prisma.ts                               → singleton do PrismaClient (driver adapter)
@@ -346,6 +420,7 @@ src/lib/
   rentalSettlements.ts                    → previewSettlement/createSettlement (David/Família)
   seasonalRentals.ts                      → serializeRentalWithComputed/RENTAL_PLATFORM_LABEL (compartilhado entre as rotas de seasonal-rentals)
   whatsappReport.ts                       → geração de relatório formatado para WhatsApp
+  backup.ts                               → backup/restauração do banco inteiro em JSON (schema zod, collectBackup, restoreBackup)
 
 prisma/
   schema.prisma                           → modelos (com comentários /// já incluídos)
