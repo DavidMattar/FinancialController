@@ -84,6 +84,8 @@ export default function ReceiptImportPanel() {
 
   /** Etapa 2: envia os itens revisados/editados (data, categoria, itens incluídos) para gravação definitiva. */
   async function handleConfirm() {
+    // Guard de tipo: o botão de confirmar só existe na tela de preview.
+    /* v8 ignore next */
     if (!preview) return;
     setBusy(true);
     setError(null);

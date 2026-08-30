@@ -38,6 +38,7 @@ sem backend em nuvem, um único usuário), com as seguintes áreas:
 | PDF | `pdfjs-dist` (extração de texto de faturas/notas fiscais) |
 | Validação | Zod |
 | Seed/scripts | `tsx` |
+| Testes | Vitest 4 + Testing Library (jsdom) — cobertura V8 travada em 100% |
 
 Testado neste ambiente com **Node v24.18.0** e **npm 11.16.0** no Windows.
 Qualquer Node ≥ 20 deve funcionar (o projeto usa `@types/node@^20` como
@@ -345,7 +346,29 @@ O que é bom saber antes de confiar nisso:
 - Detalhes de formato e das decisões de design: `src/lib/backup.ts` e a
   seção 4.8 do `contexto.md`.
 
-## 9. Comandos úteis (resumo rápido)
+## 9. Rodar os testes
+
+O projeto tem uma suíte de **1151 testes** (Vitest + Testing Library)
+cobrindo **100% de `src/`**. Ela não depende de banco nem de internet —
+`src/lib/prisma` e o `fetch` são substituídos por dublês —, então dá para
+rodar antes mesmo de configurar o PostgreSQL:
+
+```bash
+npm test              # roda a suíte uma vez
+npm run test:watch    # fica observando os arquivos
+npm run test:coverage # roda com relatório de cobertura
+```
+
+O limite de 100% está fixado em `coverage.thresholds`
+(`vitest.config.mts`): **`npm run test:coverage` falha se a cobertura
+cair**. Ao adicionar código, adicione teste junto.
+
+Detalhes de organização, decisões de configuração (por que duas
+"projects", por que o fuso é fixado, por que `sequence.hooks: "list"`) e as
+armadilhas de teste já mapeadas estão na **seção 9 do `contexto.md`** —
+leia antes de escrever teste novo, especialmente se for de componente.
+
+## 10. Comandos úteis (resumo rápido)
 
 ```bash
 npm install              # instala dependências

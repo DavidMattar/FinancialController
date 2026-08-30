@@ -65,6 +65,9 @@ export default function CategoriasPage() {
 
   /** Confirma a exclusão pendente; se o servidor recusar (categoria em uso/protegida), mostra a mensagem de erro num segundo ConfirmDialog. */
   async function handleConfirmDelete() {
+    // Guard de tipo: o diálogo de confirmação só é montado com uma categoria
+    // selecionada, então este caminho não é alcançável pela interface.
+    /* v8 ignore next */
     if (!categoryToDelete) return;
     const res = await fetch(`/api/categories/${categoryToDelete.id}`, { method: "DELETE" });
     if (!res.ok) {

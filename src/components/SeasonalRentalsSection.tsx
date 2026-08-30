@@ -77,6 +77,8 @@ export default function SeasonalRentalsSection() {
 
   /** Confirma a exclusão de um aluguel: remove o registro (e a receita gerada automaticamente) e recarrega a lista. */
   async function handleConfirmDelete() {
+    // Guard de tipo: o diálogo só abre com um aluguel selecionado.
+    /* v8 ignore next */
     if (!toDelete) return;
     await fetch(`/api/seasonal-rentals/${toDelete.id}`, { method: "DELETE" });
     setToDelete(null);

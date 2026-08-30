@@ -147,8 +147,11 @@ const investmentHoldingSchema = z.object({
 const dashboardViewSchema = z.object({
   id: idValue,
   name: z.string(),
-  // Json livre (o conjunto de filtros salvo) — não tem forma fixa, de propósito.
-  filters: z.unknown(),
+  // Json livre (o conjunto de filtros salvo) — não tem forma fixa, de
+  // propósito. O `.optional()` é obrigatório: no Zod 4 um `z.unknown()` puro
+  // ainda EXIGE a chave presente (recusa `undefined`), o que faria o schema
+  // rejeitar um arquivo em que a chave simplesmente não existe.
+  filters: z.unknown().optional(),
   isDefault: z.boolean().default(false),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
@@ -184,7 +187,10 @@ const seasonalRentalSchema = z.object({
   cleaningFee: decimalValue,
   notes: z.string().nullish(),
   // Json livre { "YYYY-MM-DD": valor } — ver SeasonalRental.nightRateOverrides.
-  nightRateOverrides: z.unknown(),
+  // `.optional()` pelo mesmo motivo de `DashboardView.filters` acima: sem ele,
+  // um arquivo sem essa chave (ex: gerado antes da feature de diárias
+  // customizadas existir) seria recusado inteiro.
+  nightRateOverrides: z.unknown().optional(),
   transactionId: z.string().nullish(),
   davidSettlementId: z.string().nullish(),
   familiaSettlementId: z.string().nullish(),

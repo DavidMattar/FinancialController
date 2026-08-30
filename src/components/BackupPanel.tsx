@@ -117,6 +117,9 @@ export default function BackupPanel() {
    * conveniência) e aplica tudo em uma única transação.
    */
   async function handleRestore() {
+    // Guard de tipo: o botão de restaurar só é renderizado depois de o arquivo
+    // ser lido e validado, então aqui o preview nunca é nulo.
+    /* v8 ignore next */
     if (!preview) return;
     setConfirmOpen(false);
     setBusy(true);

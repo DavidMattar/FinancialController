@@ -155,8 +155,11 @@ export default function SettlementModal({ onClose, onGenerated }: Props) {
                 </ul>
                 <p className="flex justify-between text-sm font-semibold pt-2 border-t border-slate-200 dark:border-slate-700">
                   <span className="text-indigo-700 dark:text-indigo-400">
-                    Total {type === "FAMILIA" ? "(soma ÷ 2) " : ""}({preview.rentalCount} aluguel
-                    {preview.rentalCount === 1 ? "" : "éis"})
+                    {/* O plural de "aluguel" é "aluguéis" (troca o "l"), não
+                        "aluguel" + sufixo — por isso a palavra inteira é
+                        escolhida de uma vez em vez de concatenada. */}
+                    Total {type === "FAMILIA" ? "(soma ÷ 2) " : ""}({preview.rentalCount}{" "}
+                    {preview.rentalCount === 1 ? "aluguel" : "aluguéis"})
                   </span>
                   <span className="text-indigo-700 dark:text-indigo-400">{formatBRL(preview.totalAmount)}</span>
                 </p>

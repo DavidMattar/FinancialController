@@ -37,6 +37,8 @@ export default function TransacoesFamiliaPage() {
 
   /** Confirma a exclusão pendente (aberta pelo ConfirmDialog) e recarrega a lista. */
   async function handleConfirmDelete() {
+    // Guard de tipo: o diálogo só abre com um lançamento selecionado.
+    /* v8 ignore next */
     if (!toDelete) return;
     await fetch(`/api/family-transactions/${toDelete.id}`, { method: "DELETE" });
     setToDelete(null);

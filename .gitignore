@@ -16,6 +16,9 @@
 # Tipos gerados automaticamente pelo Next.js
 next-env.d.ts
 
+# Relatorio de cobertura de testes (gerado por `npm run test:coverage`)
+/coverage/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

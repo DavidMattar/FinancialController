@@ -362,6 +362,10 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
   quê" de decisões não óbvias — ao editar uma função, mantenha/atualize
   o comentário se a lógica mudar (comentário desatualizado é peor que
   nenhum comentário).
+- **Todo código novo vem com teste.** A suíte cobre 100% de `src/` e o
+  limite está travado no `vitest.config.mts` — `npm run test:coverage`
+  falha se a cobertura cair. Ver seção 9 para como rodar e para as
+  armadilhas de teste já mapeadas.
 
 ## 7. Mapa de arquivos (fonte, sem gerados)
 
@@ -425,15 +429,76 @@ src/lib/
 prisma/
   schema.prisma                           → modelos (com comentários /// já incluídos)
   seed.ts                                 → 15 categorias padrão (upsert, idempotente)
+
+tests/                                    → suíte de testes (ver seção 9)
+  setup.dom.ts                            → setup do ambiente jsdom (matchers, cleanup, layout fingido p/ Recharts)
+  helpers/prismaMock.ts                   → mock do PrismaClient (proxy que cria vi.fn() por model/método)
+  helpers/http.ts                          → monta Request/Response para testar route handlers
+  helpers/text.ts, helpers/dom.ts         → normalização de espaço do Intl e busca de campo por rótulo
+  lib/, api/                              → testes de src/lib e src/app/api (ambiente node)
+  components/, pages/, hooks/             → testes de componentes e páginas (ambiente jsdom)
+vitest.config.mts                         → configuração do Vitest (2 projects + cobertura em 100%)
 ```
 
-## 8. Onde procurar mais detalhes
+## 9. Testes (`tests/`, `vitest.config.mts`)
+
+- **Rodar:** `npm test` (uma vez), `npm run test:watch` (contínuo),
+  `npm run test:coverage` (com relatório de cobertura).
+- **1151 testes** cobrindo **100% de `src/`** (statements, branches,
+  functions e lines). O limite de 100% está fixado em
+  `coverage.thresholds` do `vitest.config.mts`: **se a cobertura cair, o
+  comando falha**. Ao adicionar código novo, adicione teste junto.
+- **Nada de banco nem de rede.** Toda a suíte roda em mocks: `src/lib/prisma`
+  é substituído por `tests/helpers/prismaMock.ts` e o `fetch` é dublado nos
+  testes de UI. Rodar os testes NÃO toca no `financial_support` — o que é
+  proposital, porque não existe banco de testes isolado nesta instalação
+  (ver armadilha 11 da seção 5).
+- **Duas "projects" no Vitest** (`node` e `dom`), porque o app vive em dois
+  ambientes: `src/lib` + `src/app/api` rodam em Node (Prisma, `Request`), e
+  componentes/páginas rodam em jsdom. A cobertura é somada das duas.
+- **Fuso fixo em `America/Sao_Paulo`** (`test.env.TZ`): metade das regras
+  depende de data local (ver `dateOnly.ts`), então sem fixar o fuso a suíte
+  passaria nesta máquina e quebraria em outra.
+- **`sequence.hooks: "list"`** no config: faz o `cleanup()` do
+  `setup.dom.ts` rodar ANTES do `afterEach` de cada arquivo. Na ordem
+  inversa (padrão do Vitest), um efeito ainda pendente caía no `fetch` real
+  depois de o dublê ser removido.
+- Route handler é testado chamando a função direto (`GET(request)`), sem
+  subir servidor — ver `tests/helpers/http.ts`.
+- **Armadilhas de teste que já custaram tempo aqui** (todas com comentário
+  no próprio arquivo de teste):
+  - O `Intl` separa "R$" do número com espaço NÃO-QUEBRÁVEL: compare sempre
+    com `normalizarEspacos` (`tests/helpers/text.ts`) nos DOIS lados.
+  - Os formulários usam `<label>` sem `htmlFor`, então `getByLabelText` não
+    acha nada: use `campoPorRotulo` (`tests/helpers/dom.ts`).
+  - O jsdom não faz layout; sem os dublês de `ResizeObserver` e
+    `getBoundingClientRect` do `setup.dom.ts` o Recharts renderiza um SVG
+    vazio e o teste de gráfico passa sem testar nada.
+  - Input de arquivo `required` faz o jsdom bloquear o submit por validação:
+    dispare `fireEvent.submit(form)` em vez de clicar no botão.
+  - O React não dispara `onChange` quando o valor não muda — para testar
+    "apagar um campo", preencha antes.
+  - Formatadores passados ao Recharts (`tickFormatter`, `formatter` do
+    tooltip) nunca são chamados em jsdom; eles são testados com o Recharts
+    dublado em `tests/components/chartFormatters.test.tsx`.
+- **`/* v8 ignore next */` aparece em 8 pontos do `src/`**, sempre com
+  comentário explicando: são *guards de tipo* (`if (!preview) return;`,
+  `prev ?? []`) cujo caminho falso a interface não consegue produzir, porque
+  o controle que dispararia a função só é renderizado quando o valor já
+  existe. Não remova o guard (é ele que estreita o tipo para o TypeScript) e
+  não apague a anotação sem antes achar um jeito real de exercitá-lo.
+
+## 10. Onde procurar mais detalhes
 
 - **Como instalar/rodar do zero:** `instaladorParaIA.md` (raiz do projeto).
 - **Detalhe campo a campo dos models:** comentários `///` direto em
   `prisma/schema.prisma`.
 - **Detalhe função a função:** comentários JSDoc já presentes em cada
   arquivo `src/**/*.ts(x)`.
+- **Comportamento esperado de cada função/tela:** a suíte de testes
+  (`tests/`) é documentação executável — o nome de cada teste descreve a
+  regra em português, e é o lugar mais rápido para confirmar "o que deve
+  acontecer quando X".
 - Este arquivo (`contexto.md`) é o nível "arquitetura e regras de
   negócio" — atualize-o sempre que uma decisão de design nova e não
   óbvia for tomada, para continuar servindo seu propósito.

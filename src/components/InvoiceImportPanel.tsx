@@ -101,6 +101,8 @@ export default function InvoiceImportPanel() {
 
   /** Etapa 2: envia os lançamentos revisados/editados para gravação definitiva no banco. */
   async function handleConfirm() {
+    // Guard de tipo: o botão de confirmar só existe na tela de preview.
+    /* v8 ignore next */
     if (!preview) return;
     const [holderName, lastDigits] = primaryCardKey.split("|");
     setBusy(true);

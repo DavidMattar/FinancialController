@@ -136,6 +136,11 @@ export async function POST(request: Request) {
       installmentCurrent: t.installmentCurrent ?? null,
       installmentTotal: t.installmentTotal ?? null,
       categoryId: t.categoryId ?? null,
+      // O `?? primaryCardId` é uma rede de segurança inalcançável na prática:
+      // `cardIdByKey` foi montado logo acima a partir DESTAS mesmas transações,
+      // então a chave sempre existe. Fica como proteção caso a montagem do mapa
+      // mude no futuro — e é ignorada na cobertura por não ter como ser testada.
+      /* v8 ignore next */
       creditCardId: cardIdByKey.get(`${t.cardHolder}|${t.cardLastDigits}`) ?? primaryCardId,
       invoiceId: invoice.id,
       source: "IMPORT",

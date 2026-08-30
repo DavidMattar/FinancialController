@@ -59,6 +59,10 @@ export default function RelatoriosPage() {
   /** Marca/desmarca uma categoria (ou o pseudo-id "none") no filtro. */
   function toggleCategory(id: string) {
     setSelectedIds((prev) => {
+      // Guard de tipo: só dá para clicar num checkbox depois de as categorias
+      // carregarem, e é nessa mesma resposta que selectedIds deixa de ser nulo —
+      // então o lado direito do ?? não é alcançável pela interface.
+      /* v8 ignore next */
       const current = prev ?? [];
       return current.includes(id) ? current.filter((c) => c !== id) : [...current, id];
     });
@@ -121,6 +125,9 @@ export default function RelatoriosPage() {
           </div>
           <div className="flex flex-wrap gap-2">
             {categories.map((c) => {
+              // Guard de tipo (mesmo motivo do ?? em toggleCategory): a lista de
+              // categorias e selectedIds são preenchidos na mesma resposta.
+              /* v8 ignore next */
               const checked = selectedIds?.includes(c.id) ?? false;
               return (
                 <label
