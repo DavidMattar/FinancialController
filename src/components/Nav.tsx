@@ -1,7 +1,11 @@
 "use client";
 
-// Barra de navegação fixa no topo de todas as páginas: mostra o nome do app,
-// os links das seções e o botão de alternar tema claro/escuro.
+// Barra de navegação fixa no topo de todas as páginas: os links das seções e o
+// botão de alternar tema claro/escuro.
+//
+// Não repete o nome do app: ele já está no título da aba do navegador
+// (`metadata.title` do layout raiz), e ocupava a largura que agora sobra para
+// as abas se espalharem.
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -19,11 +23,15 @@ export default function Nav() {
 
   return (
     <header className="border-b border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center gap-8 h-14">
-        <span className="font-semibold text-slate-900 whitespace-nowrap dark:text-slate-100">
-          💰 Controle Financeiro
-        </span>
-        <nav className="flex gap-1 overflow-x-auto">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center gap-3 h-14">
+        {/*
+          `flex-1` + `justify-between`: as abas ocupam toda a largura livre e o
+          espaço sobrando é distribuído ENTRE elas, mantendo a largura natural de
+          cada rótulo (forçar largura igual deixaria "Receitas" com um vão enorme
+          e "Transações Família" apertada). O `gap-1` é o espaçamento mínimo,
+          que passa a valer quando não há espaço sobrando e a barra rola.
+        */}
+        <nav className="flex flex-1 justify-between gap-1 overflow-x-auto">
           {LINKS.map((link) => {
             // Um link é "ativo" quando sua rota é exatamente a página atual.
             const active = pathname === link.href;

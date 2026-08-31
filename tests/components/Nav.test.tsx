@@ -29,9 +29,21 @@ const PAGINAS: [string, string][] = [
 ];
 
 describe("Nav", () => {
-  it("mostra o nome do app", () => {
+  it("não repete o nome do app na barra", () => {
+    // O nome vive no título da aba do navegador (metadata do layout raiz); na
+    // barra ele só consumia a largura que as abas agora usam.
     render(<Nav />);
-    expect(screen.getByText(/Controle Financeiro/)).toBeInTheDocument();
+    expect(screen.queryByText(/Controle Financeiro/)).not.toBeInTheDocument();
+  });
+
+  it("distribui as abas na largura livre da barra", () => {
+    render(<Nav />);
+
+    const nav = screen.getByRole("navigation");
+    expect(nav.className).toContain("flex-1");
+    expect(nav.className).toContain("justify-between");
+    // Continua rolando na horizontal quando a tela é estreita demais.
+    expect(nav.className).toContain("overflow-x-auto");
   });
 
   it("mostra um link para cada página, com o href certo", () => {
