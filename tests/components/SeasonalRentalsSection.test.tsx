@@ -56,8 +56,10 @@ function aluguel(over: Record<string, unknown> = {}) {
     checkOut: "2026-08-11",
     netAmountReceived: 1000,
     cleaningFee: 180,
+    notes: null as string | null,
     isDavidSettled: false,
     isFamiliaSettled: false,
+    isLimpezaSettled: false,
     expenses: [],
     nightRateOverrides: {},
     computed: {
@@ -166,12 +168,25 @@ describe("SeasonalRentalsSection — listagem", () => {
   });
 
   it("marca os repasses já fechados", async () => {
-    comAlugueis([aluguel({ isDavidSettled: true, isFamiliaSettled: true })]);
+    comAlugueis([
+      aluguel({ isDavidSettled: true, isFamiliaSettled: true, isLimpezaSettled: true }),
+    ]);
 
     render(<SeasonalRentalsSection />);
 
     await waitFor(() => expect(screen.getByText("✓ David")).toBeInTheDocument());
     expect(screen.getByText("✓ Família")).toBeInTheDocument();
+    expect(screen.getByText("✓ Limpeza")).toBeInTheDocument();
+  });
+
+  it("marca só a trilha fechada (as três são independentes)", async () => {
+    comAlugueis([aluguel({ isLimpezaSettled: true })]);
+
+    render(<SeasonalRentalsSection />);
+
+    await waitFor(() => expect(screen.getByText("✓ Limpeza")).toBeInTheDocument());
+    expect(screen.queryByText("✓ David")).not.toBeInTheDocument();
+    expect(screen.queryByText("✓ Família")).not.toBeInTheDocument();
   });
 
   it("não marca nada quando os repasses estão abertos", async () => {
@@ -182,6 +197,43 @@ describe("SeasonalRentalsSection — listagem", () => {
     await waitFor(() => screen.getByText("Airbnb"));
     expect(screen.queryByText("✓ David")).not.toBeInTheDocument();
     expect(screen.queryByText("✓ Família")).not.toBeInTheDocument();
+    expect(screen.queryByText("✓ Limpeza")).not.toBeInTheDocument();
+  });
+
+  it("mostra a nota do aluguel quando existe", async () => {
+    comAlugueis([aluguel({ notes: "Hóspede quebrou uma taça." })]);
+
+    render(<SeasonalRentalsSection />);
+
+    await waitFor(() => expect(screen.getByText("Hóspede quebrou uma taça.")).toBeInTheDocument());
+  });
+
+  it("preserva as quebras de linha da nota", async () => {
+    comAlugueis([aluguel({ notes: "Linha 1\nLinha 2" })]);
+
+    render(<SeasonalRentalsSection />);
+
+    const nota = await waitFor(() => screen.getByText(/Linha 1/));
+    // `whitespace-pre-line`: sem isso o textarea do usuário viraria uma linha só.
+    expect(nota.className).toContain("whitespace-pre-line");
+  });
+
+  it("não reserva espaço para a nota quando o aluguel não tem uma", async () => {
+    comAlugueis([aluguel({ notes: null })]);
+
+    render(<SeasonalRentalsSection />);
+
+    await waitFor(() => screen.getByText("Airbnb"));
+    expect(document.querySelector(".whitespace-pre-line")).toBeNull();
+  });
+
+  it("nota vazia (string em branco) também não é exibida", async () => {
+    comAlugueis([aluguel({ notes: "" })]);
+
+    render(<SeasonalRentalsSection />);
+
+    await waitFor(() => screen.getByText("Airbnb"));
+    expect(document.querySelector(".whitespace-pre-line")).toBeNull();
   });
 
   it("sinaliza quando o aluguel tem diárias customizadas", async () => {

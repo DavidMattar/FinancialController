@@ -64,6 +64,19 @@ function comRespostas(opcoes: {
   });
 }
 
+/** O input de descrição do lançamento na posição `n` (1-based) da tabela de revisão. */
+function campoDescricao(n: number): HTMLInputElement {
+  return screen.getByLabelText(`Descrição do lançamento ${n}`) as HTMLInputElement;
+}
+
+/**
+ * A linha (`<tr>`) do lançamento na posição `n` (1-based) da tabela de revisão.
+ * Localizada pelo input de descrição, já que a descrição não é mais texto solto.
+ */
+function linhaDoLancamento(n: number): HTMLTableRowElement {
+  return campoDescricao(n).closest("tr")!;
+}
+
 /**
  * Escolhe o PDF e dispara o processamento.
  *
@@ -185,7 +198,7 @@ describe("InvoiceImportPanel — etapa de preview", () => {
 
     processarPdf();
 
-    await waitFor(() => expect(screen.getByText("SUPERMERCADO BH")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByDisplayValue("SUPERMERCADO BH")).toBeInTheDocument());
     // Os dois lançamentos do exemplo têm a mesma data.
     expect(screen.getAllByText("05/08/2026")).toHaveLength(2);
     expect(screen.getAllByText("****8258")).toHaveLength(2);
@@ -214,7 +227,7 @@ describe("InvoiceImportPanel — etapa de preview", () => {
     processarPdf();
 
     await waitFor(() => expect(screen.getByText("Parcelamento")).toBeInTheDocument());
-    expect(screen.getByText(/\(2\/10\)/)).toBeInTheDocument();
+    expect(screen.getByText(/parcela 2\/10/)).toBeInTheDocument();
   });
 
   it("mostra sinal negativo em lançamento que não é despesa", async () => {
@@ -223,8 +236,8 @@ describe("InvoiceImportPanel — etapa de preview", () => {
 
     processarPdf();
 
-    await waitFor(() => expect(screen.getByText("PAGAMENTO DE FATURA")).toBeInTheDocument());
-    const linha = screen.getByText("PAGAMENTO DE FATURA").closest("tr")!;
+    await waitFor(() => expect(screen.getByDisplayValue("PAGAMENTO DE FATURA")).toBeInTheDocument());
+    const linha = screen.getByDisplayValue("PAGAMENTO DE FATURA").closest("tr")!;
     expect(norm(linha.textContent)).toContain(norm("-R$ 2.000,00"));
   });
 
@@ -260,7 +273,10 @@ describe("InvoiceImportPanel — etapa de preview", () => {
     processarPdf();
     await waitFor(() => screen.getByText(/2 selecionados/));
 
-    fireEvent.click(screen.getAllByRole("checkbox")[0]);
+    // Cada linha tem DOIS checkboxes (incluir e "verificar devolução"), então o
+    // índice achatado não serve para escolher o de incluir de uma linha
+    // específica — o primeiro checkbox da linha é sempre o de incluir.
+    fireEvent.click(linhaDoLancamento(1).querySelectorAll("input[type=checkbox]")[0]);
 
     await waitFor(() => expect(screen.getByText(/1 selecionados/)).toBeInTheDocument());
   });
@@ -271,7 +287,9 @@ describe("InvoiceImportPanel — etapa de preview", () => {
     processarPdf();
     await waitFor(() => screen.getByText(/2 selecionados/));
 
-    for (const caixa of screen.getAllByRole("checkbox")) fireEvent.click(caixa);
+    for (const n of [1, 2]) {
+      fireEvent.click(linhaDoLancamento(n).querySelectorAll("input[type=checkbox]")[0]);
+    }
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Confirmar importação" })).toBeDisabled(),
@@ -284,7 +302,7 @@ describe("InvoiceImportPanel — etapa de preview", () => {
 
     processarPdf();
 
-    await waitFor(() => screen.getByText("SUPERMERCADO BH"));
+    await waitFor(() => screen.getByDisplayValue("SUPERMERCADO BH"));
     expect(screen.queryByText(/Cartão principal/)).not.toBeInTheDocument();
   });
 
@@ -354,7 +372,7 @@ describe("InvoiceImportPanel — etapa de preview", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Processando..." })).toBeDisabled());
     liberar();
-    await waitFor(() => expect(screen.getByText("SUPERMERCADO BH")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByDisplayValue("SUPERMERCADO BH")).toBeInTheDocument());
   });
 });
 
@@ -363,13 +381,13 @@ describe("InvoiceImportPanel — confirmação", () => {
     comRespostas(opcoes);
     render(<InvoiceImportPanel />);
     processarPdf();
-    await waitFor(() => screen.getByText("SUPERMERCADO BH"));
+    await waitFor(() => screen.getByDisplayValue("SUPERMERCADO BH"));
   }
 
   it("envia os dados da fatura e só os lançamentos marcados", async () => {
     await chegarNoPreview();
 
-    fireEvent.click(screen.getAllByRole("checkbox")[1]);
+    fireEvent.click(linhaDoLancamento(2).querySelectorAll("input[type=checkbox]")[0]);
     fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
 
     await waitFor(() => {
@@ -496,7 +514,7 @@ describe("InvoiceImportPanel — confirmação", () => {
     });
     render(<InvoiceImportPanel />);
     processarPdf();
-    await waitFor(() => screen.getByText("SUPERMERCADO BH"));
+    await waitFor(() => screen.getByDisplayValue("SUPERMERCADO BH"));
 
     fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
 
@@ -514,5 +532,215 @@ describe("InvoiceImportPanel — submissão sem arquivo", () => {
     fireEvent.submit(document.querySelector("form")!);
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A descrição de cada lançamento é editável na própria tela de revisão, porque
+ * o texto que vem da fatura é o do adquirente e muitas vezes não diz nada. O
+ * que importa nos testes: o texto editado é o que vai para a API, a original
+ * continua recuperável, e descrição vazia não passa (a rota de confirmação
+ * exige `min(1)`).
+ */
+describe("InvoiceImportPanel — editar a descrição do lançamento", () => {
+  async function chegarNoPreview() {
+    comRespostas();
+    render(<InvoiceImportPanel />);
+    processarPdf();
+    await waitFor(() => screen.getByDisplayValue("SUPERMERCADO BH"));
+  }
+
+  it("abre com a descrição que veio da fatura", async () => {
+    await chegarNoPreview();
+
+    expect(campoDescricao(1)).toHaveValue("SUPERMERCADO BH");
+    expect(campoDescricao(2)).toHaveValue("PAGAMENTO DE FATURA");
+  });
+
+  it("envia a descrição editada, não a original da fatura", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira da semana" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
+
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find((c) => c[0] === "/api/invoices/confirm");
+      const corpo = JSON.parse(chamada![1].body);
+      expect(corpo.transactions[0].description).toBe("Feira da semana");
+    });
+  });
+
+  it("apara espaços da descrição antes de enviar", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "  Feira  " } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
+
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find((c) => c[0] === "/api/invoices/confirm");
+      expect(JSON.parse(chamada![1].body).transactions[0].description).toBe("Feira");
+    });
+  });
+
+  it("não envia a descrição original como campo extra (é estado só da tela)", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
+
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find((c) => c[0] === "/api/invoices/confirm");
+      expect(JSON.parse(chamada![1].body).transactions[0]).not.toHaveProperty("parsedDescription");
+    });
+  });
+
+  it("editar um lançamento não mexe nos outros", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira" } });
+
+    expect(campoDescricao(2)).toHaveValue("PAGAMENTO DE FATURA");
+  });
+
+  it("destaca o campo e libera o restaurar só quando a descrição foi alterada", async () => {
+    await chegarNoPreview();
+
+    const restaurar = screen.getByLabelText("Restaurar descrição original do lançamento 1");
+    expect(restaurar).toBeDisabled();
+    expect(campoDescricao(1).className).not.toContain("border-amber-300");
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira" } });
+
+    expect(restaurar).not.toBeDisabled();
+    expect(campoDescricao(1).className).toContain("border-amber-300");
+  });
+
+  it("restaurar devolve a descrição original da fatura", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira" } });
+    fireEvent.click(screen.getByLabelText("Restaurar descrição original do lançamento 1"));
+
+    expect(campoDescricao(1)).toHaveValue("SUPERMERCADO BH");
+    expect(screen.getByLabelText("Restaurar descrição original do lançamento 1")).toBeDisabled();
+  });
+
+  it("mostra a descrição original no title quando o campo foi editado", async () => {
+    await chegarNoPreview();
+
+    expect(campoDescricao(1).title).toBe("SUPERMERCADO BH");
+
+    fireEvent.change(campoDescricao(1), { target: { value: "Feira" } });
+
+    expect(campoDescricao(1).title).toBe("Original na fatura: SUPERMERCADO BH");
+  });
+
+  it("bloqueia a confirmação enquanto um lançamento incluído está sem descrição", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "" } });
+
+    expect(screen.getByRole("button", { name: "Confirmar importação" })).toBeDisabled();
+    expect(screen.getByText(/está sem descrição/)).toBeInTheDocument();
+  });
+
+  it("descrição só com espaços conta como vazia", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "   " } });
+
+    expect(screen.getByRole("button", { name: "Confirmar importação" })).toBeDisabled();
+  });
+
+  it("usa o plural no aviso quando são vários sem descrição", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(1), { target: { value: "" } });
+    fireEvent.change(campoDescricao(2), { target: { value: "" } });
+
+    expect(screen.getByText(/2 lançamentos selecionados estão sem descrição/)).toBeInTheDocument();
+  });
+
+  it("desmarcar o lançamento sem descrição libera a confirmação", async () => {
+    await chegarNoPreview();
+
+    fireEvent.change(campoDescricao(2), { target: { value: "" } });
+    expect(screen.getByRole("button", { name: "Confirmar importação" })).toBeDisabled();
+
+    // O primeiro checkbox da linha é o de incluir/excluir o lançamento.
+    fireEvent.click(linhaDoLancamento(2).querySelectorAll("input[type=checkbox]")[0]);
+
+    expect(screen.getByRole("button", { name: "Confirmar importação" })).not.toBeDisabled();
+    expect(screen.queryByText(/está sem descrição/)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * O checkbox "Dev." marca o lançamento como pendente de verificação de
+ * devolução já na criação — evita ter que abrir cada transação depois de
+ * importar. Sem a trava de e-commerce que o painel da transação existente usa:
+ * na revisão da fatura, quem decide é o usuário.
+ */
+describe("InvoiceImportPanel — marcar devolução na revisão", () => {
+  async function chegarNoPreview() {
+    comRespostas();
+    render(<InvoiceImportPanel />);
+    processarPdf();
+    await waitFor(() => screen.getByDisplayValue("SUPERMERCADO BH"));
+  }
+
+  it("começa desmarcado em todos os lançamentos", async () => {
+    await chegarNoPreview();
+
+    expect(screen.getByLabelText("Verificar devolução do lançamento 1")).not.toBeChecked();
+    expect(screen.getByLabelText("Verificar devolução do lançamento 2")).not.toBeChecked();
+  });
+
+  it("envia pendingReturn true só no lançamento marcado", async () => {
+    await chegarNoPreview();
+
+    fireEvent.click(screen.getByLabelText("Verificar devolução do lançamento 1"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
+
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find((c) => c[0] === "/api/invoices/confirm");
+      const corpo = JSON.parse(chamada![1].body);
+      expect(corpo.transactions[0].pendingReturn).toBe(true);
+      expect(corpo.transactions[1].pendingReturn).toBe(false);
+    });
+  });
+
+  it("aparece em qualquer lançamento, não só nos de e-commerce", async () => {
+    // "SUPERMERCADO BH" e "PAGAMENTO DE FATURA" não estão em ecommerceMerchants.ts
+    // e mesmo assim têm o checkbox — a trava de e-commerce vale só para o painel
+    // da transação já criada.
+    await chegarNoPreview();
+
+    expect(screen.getByLabelText("Verificar devolução do lançamento 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Verificar devolução do lançamento 2")).toBeInTheDocument();
+  });
+
+  it("desmarcar volta a enviar false", async () => {
+    await chegarNoPreview();
+
+    const check = screen.getByLabelText("Verificar devolução do lançamento 1");
+    fireEvent.click(check);
+    fireEvent.click(check);
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar importação" }));
+
+    await waitFor(() => {
+      const chamada = fetchMock.mock.calls.find((c) => c[0] === "/api/invoices/confirm");
+      expect(JSON.parse(chamada![1].body).transactions[0].pendingReturn).toBe(false);
+    });
+  });
+
+  it("conta os marcados no cabeçalho da lista", async () => {
+    await chegarNoPreview();
+
+    expect(screen.queryByText(/p\/ verificar devolução/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Verificar devolução do lançamento 1"));
+
+    expect(screen.getByText(/1 p\/ verificar devolução/)).toBeInTheDocument();
   });
 });

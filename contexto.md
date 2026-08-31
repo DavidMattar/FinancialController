@@ -53,6 +53,7 @@ SeasonalRental ──> SeasonalRentalExpense
        │
        ├─ davidSettlementId ──> RentalSettlement (type=DAVID)
        ├─ familiaSettlementId ─> RentalSettlement (type=FAMILIA)
+       ├─ limpezaSettlementId ─> RentalSettlement (type=LIMPEZA)
        └─ transactionId (soft reference, String simples, SEM @relation)
             └─> aponta para a Transaction de receita auto-criada
 ```
@@ -66,11 +67,12 @@ SeasonalRental ──> SeasonalRentalExpense
   automaticamente (`transactionId`) é uma **soft reference** — um campo
   `String?` puro, sem `@relation` — feita assim de propósito para não
   precisar tocar no model `Transaction` compartilhado.
-- `SeasonalRental` tem **duas relações Prisma nomeadas** distintas para
-  o mesmo model `RentalSettlement` (`"DavidSettlementRentals"` e
-  `"FamiliaSettlementRentals"`), porque os repasses de David e da
-  Família são trilhas independentes — um aluguel pode estar fechado
-  para uma e aberto para a outra.
+- `SeasonalRental` tem **três relações Prisma nomeadas** distintas para
+  o mesmo model `RentalSettlement` (`"DavidSettlementRentals"`,
+  `"FamiliaSettlementRentals"` e `"LimpezaSettlementRentals"`), porque os
+  repasses de David, da Família e da Limpeza são trilhas independentes —
+  um aluguel pode estar fechado para uma e aberto para as outras, em
+  qualquer combinação.
 
 ## 4. Regras de negócio importantes (não são óbvias lendo só o código)
 
@@ -141,14 +143,32 @@ SeasonalRental ──> SeasonalRentalExpense
   de receita (`type: INCOME`, categoria "Aluguel Rancho" buscada por
   nome) no valor de `totalDavid`, datada `checkOut + 1 dia`. Apagar o
   aluguel apaga essa transação vinculada também.
-- **Repasses (`RentalSettlement`) são permanentes.** Existem dois tipos
-  independentes: `DAVID` (soma de `totalDavid` dos aluguéis não
-  liquidados) e `FAMILIA` (soma de `netForDistribution`, **dividida por
-  2 só no total final**, não por aluguel). Gerar um repasse trava os
-  aluguéis correspondentes (`davidSettlementId`/`familiaSettlementId`)
-  para nunca serem contados de novo. **Não existe UI de cancelar/desfazer
+- **Repasses (`RentalSettlement`) são permanentes.** Existem **três**
+  tipos independentes: `DAVID` (soma de `totalDavid` dos aluguéis não
+  liquidados), `FAMILIA` (soma de `netForDistribution`, **dividida por
+  2 só no total final**, não por aluguel) e `LIMPEZA` (soma de
+  `cleaningFee`, **sem nenhuma divisão** — é o que sai para pagar quem
+  limpa). Gerar um repasse trava os aluguéis correspondentes
+  (`davidSettlementId`/`familiaSettlementId`/`limpezaSettlementId`) para
+  nunca serem contados de novo. **Não existe UI de cancelar/desfazer
   repasse — foi pedida e depois explicitamente retirada pelo usuário.
   Não adicione essa funcionalidade a menos que seja pedida de novo.**
+  - As três trilhas somadas fecham exatamente o `netAmountReceived` de
+    cada aluguel, porque `netForDistribution` já é
+    `netAmountReceived − totalDavid − cleaningFee`. Foi por isso que a
+    limpeza virou uma terceira trilha, e não um desconto embutido em
+    outra: o dinheiro já estava separado na fórmula, só faltava o
+    fechamento por período.
+  - A base de cada trilha vive em **um lugar só**, o `rentalShare()` de
+    `src/lib/rentalSettlements.ts`, e a coluna que trava o aluguel em
+    cada uma vive no mapa `SETTLEMENT_FIELD` do mesmo arquivo (é o que
+    garante que o filtro do `findMany` e o `updateMany` do fechamento
+    nunca divirjam). O `perRentalValue` do `SettlementModal` é o espelho
+    do `rentalShare` na tela — mudar um sem o outro faz a lista do
+    preview não bater com o total gerado.
+  - `LIMPEZA` é a única trilha que **não** depende de `computeRental()`:
+    lê o `cleaningFee` direto do registro, então gasto extra e diária
+    customizada não a afetam.
 - **Editar um `SeasonalRental` já é permitido mesmo depois de repassado**
   (botão "editar" por aluguel em `SeasonalRentalsSection`, `PUT
   /api/seasonal-rentals/[id]`). Isso é diferente de desfazer um repasse:
@@ -159,6 +179,13 @@ SeasonalRental ──> SeasonalRentalExpense
   mesma chamada, para o ledger principal continuar batendo com o
   aluguel. Os gastos extras (`SeasonalRentalExpense`) são substituídos
   por completo a cada edição (delete + recreate), não casados por id.
+- **Nota da estadia (`SeasonalRental.notes`).** Observação livre por
+  aluguel (textarea "Nota sobre a estadia" no `SeasonalRentalModal`,
+  exibida na lista com `whitespace-pre-line` para preservar as quebras
+  de linha digitadas). Nota em branco ou só com espaços é gravada como
+  `null`, não como `""` — "sem nota" é um único valor no banco.
+  **Não entra no relatório de WhatsApp**, por decisão explícita do
+  usuário: é anotação interna, não informação para o destinatário.
 - Relatório de WhatsApp (`src/lib/whatsappReport.ts`) é **por aluguel
   individual**, não por período — cada aluguel na lista tem seu próprio
   botão. Formatação usa `*texto*` para negrito (convenção do WhatsApp).
@@ -180,12 +207,24 @@ SeasonalRental ──> SeasonalRentalExpense
 - Categorias `kind: INCOME` forçam `type: INCOME` na transação
   (create e update, no servidor) — o formulário de lançamento manual
   também trava e ajusta o select de Tipo automaticamente.
-- `Transaction.pendingReturn: Boolean` — checkbox só exibido quando a
-  transação tem `creditCardId` E a descrição casa com um comerciante de
-  e-commerce conhecido (`src/lib/ecommerceMerchants.ts`). Linha fica
+- `Transaction.pendingReturn: Boolean` — "verificar devolução". Linha fica
   destacada em vermelho em toda a UI. `PendingReturnsPanel` no dashboard
   ignora o filtro de período (busca própria) porque é para persistir
   entre períodos.
+  - **A trava de e-commerce vale só para a transação JÁ CRIADA.** No
+    `TransactionItemsPanel` (painel da linha expandida) o checkbox só
+    aparece quando a transação tem `creditCardId` E a descrição casa com
+    um comerciante conhecido (`src/lib/ecommerceMerchants.ts`) — regra
+    original, inalterada.
+  - **Na criação não há trava nenhuma**, por decisão explícita do usuário:
+    o checkbox aparece sempre no formulário manual de `/transacoes` e em
+    toda linha da revisão de fatura importada. O raciocínio: na hora de
+    lançar, quem sabe o que precisa de acompanhamento é o usuário — pode
+    ser loja física, serviço, adiantamento. Não "conserte" isso aplicando
+    `isEcommerceMerchant` nesses dois pontos.
+  - Os dois caminhos de criação aceitam o campo: `POST /api/transactions`
+    (`pendingReturn` opcional) e `POST /api/invoices/confirm` (um
+    `pendingReturn` por lançamento).
 
 ### 4.5. Importação de fatura de cartão (`src/lib/invoiceParsers/`)
 - Só suporta **Santander** (`santander.ts`). Extração via `pdfjs-dist`
@@ -195,6 +234,22 @@ SeasonalRental ──> SeasonalRentalExpense
 - Fluxo em duas etapas: `parse` (preview, nada salvo) → `confirm`
   (salva no banco após o usuário revisar/editar). Mesmo padrão usado
   para notas fiscais.
+- **Na revisão dá para reescrever a descrição de cada lançamento** (input
+  no lugar do texto). Existe porque a fatura traz o nome do adquirente
+  ("PAG*Loja1234"), que muitas vezes não diz nada — renomear antes de
+  gravar evita abrir cada transação depois.
+  - A descrição original fica em `EditableRow.parsedDescription`, que é
+    **estado só da tela** (alimenta o "↺ restaurar" por linha e o `title`)
+    e é removida do corpo enviado por `toConfirmPayload()`. `EditableRow`
+    existe separado de `PreviewTransaction` justamente para esses campos
+    serem obrigatórios na tela e ausentes no que a API devolve — sem isso
+    a leitura precisaria de um fallback que a interface nunca produz.
+  - Renomear **não** re-sugere categoria: a sugestão por
+    `Category.keywords` acontece no `parse`, e daí em diante a categoria
+    é escolha explícita no select da mesma linha.
+  - Descrição vazia bloqueia o botão "Confirmar importação" (a rota exige
+    `z.string().min(1)`) — melhor avisar na tela que receber erro de
+    validação depois de revisar a fatura inteira.
 - Para adicionar outro banco: só depois de receber uma amostra real do
   PDF — nunca implemente um parser a partir de suposição de layout.
   Registrar o novo parser em `invoiceParsers/index.ts`.
@@ -271,6 +326,35 @@ SeasonalRental ──> SeasonalRentalExpense
   ela entende. Cada tabela é opcional no schema zod (padrão `[]`), então
   backup gerado antes de um model novo existir continua restaurável.
 
+### 4.9. Mover uma transação para o ledger da família (`POST /api/transactions/[id]/move-to-family`)
+- Botão "→ Família" por linha em `/transacoes` (só lá: no dashboard e em
+  `/receitas` a tabela é somente leitura, então `TransactionsTable` só
+  mostra o botão quando recebe `onMoveToFamily`).
+- É **movimentação, não cópia**: cria a `FamilyTransaction` e apaga a
+  `Transaction`, as duas coisas na MESMA transação do Postgres — sem isso
+  uma falha no meio deixaria o lançamento nos dois ledgers ou em nenhum.
+- **Só migram os campos que a família tem**: data, descrição, valor, tipo e
+  observação. Categoria, cartão, fatura, parcelamento, `pendingReturn` e
+  sub-itens **são perdidos** — é consequência direta do isolamento
+  proposital entre os dois ledgers (seção 3), não um esquecimento. Os
+  sub-itens saem por `onDelete: Cascade`. O diálogo de confirmação lista
+  isso explicitamente antes de o usuário confirmar.
+- **`PAYMENT` vira `EXPENSE`** (mapa `FAMILY_TYPE` na rota), porque
+  `FamilyTransactionType` não tem `PAYMENT` de propósito. A rota devolve
+  `convertedFromPayment` para a tela avisar da conversão sem repetir a
+  regra no front-end.
+- É uma rota própria, e não um PATCH em `/api/transactions/[id]`, porque
+  não é edição de campo: são duas tabelas sem relação nenhuma e o
+  resultado é a transação deixar de existir no ledger principal.
+- **Não existe caminho de volta pela interface** (nem `DELETE`/`GET` nessa
+  rota) — mesma postura dos repasses de aluguel. Se a transação movida era
+  a receita auto-criada de um aluguel, o `SeasonalRental.transactionId`
+  fica órfão, exatamente como já acontece ao excluir a transação, e o PUT
+  do aluguel já tolera isso.
+- `ConfirmDialog` passou a renderizar a mensagem com `whitespace-pre-line`
+  para caber essa explicação em vários parágrafos; mensagem de uma linha
+  não muda em nada.
+
 ## 5. Convenções e armadilhas técnicas (ver detalhe completo em `instaladorParaIA.md` seção 5)
 
 Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
@@ -300,9 +384,10 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
    adicione cancelamento sem pedido explícito novo do usuário.
 8. **`.gitignore` existe na raiz do projeto** (criado em 2026-08-28,
    antes disso o repositório não tinha nenhum) e ignora `node_modules`,
-   `.next`, `src/generated` (Prisma Client gerado) e `.env`. Se algum
-   desses aparecer como "untracked" no `git status`, é esperado — não
-   são para entrar no repositório.
+   `.next`, `src/generated` (Prisma Client gerado), `.env`, `/coverage` e
+   `tsconfig.tsbuildinfo` (cache incremental que `npx tsc` recria). Se
+   algum desses aparecer como "untracked" no `git status`, é esperado —
+   não são para entrar no repositório.
 9. **Existe uma segunda cópia do projeto em `C:\financialSupport`** (o
    `X:` é um disco físico distinto, não um mapeamento de `C:`). As duas
    cópias apontam para o MESMO banco (`financial_support`), então é
@@ -374,6 +459,7 @@ src/app/
   layout.tsx, page.tsx                    → shell raiz + dashboard
   api/
     transactions/                         → CRUD + metrics + export + items (sub-itens)
+    transactions/[id]/move-to-family/     → move a transação para o ledger da família (seção 4.9)
     categories/                           → CRUD de categorias
     credit-cards/                         → CRUD de cartões
     invoices/{parse,confirm}/             → importação de fatura (2 etapas)
@@ -444,7 +530,7 @@ vitest.config.mts                         → configuração do Vitest (2 projec
 
 - **Rodar:** `npm test` (uma vez), `npm run test:watch` (contínuo),
   `npm run test:coverage` (com relatório de cobertura).
-- **1151 testes** cobrindo **100% de `src/`** (statements, branches,
+- **1242 testes** cobrindo **100% de `src/`** (statements, branches,
   functions e lines). O limite de 100% está fixado em
   `coverage.thresholds` do `vitest.config.mts`: **se a cobertura cair, o
   comando falha**. Ao adicionar código novo, adicione teste junto.
@@ -481,7 +567,7 @@ vitest.config.mts                         → configuração do Vitest (2 projec
   - Formatadores passados ao Recharts (`tickFormatter`, `formatter` do
     tooltip) nunca são chamados em jsdom; eles são testados com o Recharts
     dublado em `tests/components/chartFormatters.test.tsx`.
-- **`/* v8 ignore next */` aparece em 8 pontos do `src/`**, sempre com
+- **`/* v8 ignore next */` aparece em 10 pontos do `src/`**, sempre com
   comentário explicando: são *guards de tipo* (`if (!preview) return;`,
   `prev ?? []`) cujo caminho falso a interface não consegue produzir, porque
   o controle que dispararia a função só é renderizado quando o valor já

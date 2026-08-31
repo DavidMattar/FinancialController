@@ -3,7 +3,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { campoPorRotulo } from "../helpers/dom";
 
 vi.mock("@/components/TransactionsTable", () => ({
-  default: ({ transactions, onCategoryChange, onDelete, onPendingReturnChange }: any) => (
+  default: ({
+    transactions,
+    onCategoryChange,
+    onDelete,
+    onPendingReturnChange,
+    onMoveToFamily,
+  }: any) => (
     <div data-testid="tabela">
       <span>{transactions.length} transações</span>
       {transactions.map((t: any) => (
@@ -20,6 +26,11 @@ vi.mock("@/components/TransactionsTable", () => ({
       <button type="button" onClick={() => onPendingReturnChange("tx-1", true)}>
         marcar pendência
       </button>
+      {transactions.map((t: any) => (
+        <button key={t.id} type="button" onClick={() => onMoveToFamily(t)}>
+          mover {t.id}
+        </button>
+      ))}
     </div>
   ),
 }));
@@ -280,6 +291,7 @@ describe("página /transacoes — formulário manual", () => {
           amount: 12.5,
           type: "EXPENSE",
           categoryId: null,
+          pendingReturn: false,
         }),
       }),
     );
@@ -389,5 +401,223 @@ describe("página /transacoes — data do formulário manual", () => {
       const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
       expect(JSON.parse(post![1].body).date).toBe("2026-07-20");
     });
+  });
+});
+
+/**
+ * O checkbox "Verificar devolução" no formulário manual permite marcar a
+ * pendência já na criação, em vez de abrir a transação depois. Não tem a trava
+ * de e-commerce do painel da transação existente (ver TransactionItemsPanel):
+ * na hora de lançar, quem decide é o usuário.
+ */
+describe("página /transacoes — verificar devolução na criação", () => {
+  async function abrirFormularioLimpo() {
+    comDados();
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "+ Nova transação" }));
+  }
+
+  /** Corpo JSON do POST de criação da transação. */
+  function corpoCriado() {
+    const post = fetchMock.mock.calls.find(
+      (c) => c[0] === "/api/transactions" && c[1]?.method === "POST",
+    );
+    return JSON.parse(post![1].body);
+  }
+
+  it("o checkbox aparece sempre, sem depender da descrição", async () => {
+    await abrirFormularioLimpo();
+
+    expect(screen.getByLabelText(/Verificar devolução/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Verificar devolução/)).not.toBeChecked();
+  });
+
+  it("envia pendingReturn true quando marcado", async () => {
+    await abrirFormularioLimpo();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "COMPRA ONLINE" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "99,90" } });
+    fireEvent.click(screen.getByLabelText(/Verificar devolução/));
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    await waitFor(() => expect(corpoCriado().pendingReturn).toBe(true));
+  });
+
+  it("envia false quando não marcado", async () => {
+    await abrirFormularioLimpo();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "PADARIA" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "10" } });
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    await waitFor(() => expect(corpoCriado().pendingReturn).toBe(false));
+  });
+
+  it("desmarcar antes de salvar volta a enviar false", async () => {
+    await abrirFormularioLimpo();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "PADARIA" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "10" } });
+    fireEvent.click(screen.getByLabelText(/Verificar devolução/));
+    fireEvent.click(screen.getByLabelText(/Verificar devolução/));
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    await waitFor(() => expect(corpoCriado().pendingReturn).toBe(false));
+  });
+
+  it("marcar não bloqueia nem muda o tipo da transação", async () => {
+    await abrirFormularioLimpo();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "SERVIÇO" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "50" } });
+    fireEvent.click(screen.getByLabelText(/Verificar devolução/));
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    await waitFor(() => expect(corpoCriado().type).toBe("EXPENSE"));
+  });
+});
+
+/**
+ * Mover para a família apaga a transação do ledger principal e cria a
+ * equivalente no ledger isolado, então a interface pede confirmação e é
+ * explícita sobre o que se perde (o ledger da família não tem categoria,
+ * cartão, fatura, parcelamento nem devolução pendente).
+ */
+describe("página /transacoes — mover para Transações Família", () => {
+  async function comLista(transacoes: unknown[]) {
+    comDados(transacoes);
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+  }
+
+  it("pede confirmação antes de mover", async () => {
+    await comLista([{ id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByText(/Mover "PADARIA" para Transações Família\?/)).toBeInTheDocument();
+    // Nada é enviado enquanto o usuário não confirma.
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("move-to-family"))).toBe(false);
+  });
+
+  it("avisa o que se perde na movimentação", async () => {
+    await comLista([{ id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+
+    expect(screen.getByText(/Categoria, cartão, fatura, parcelamento/)).toBeInTheDocument();
+    expect(screen.getByText(/Não há como desfazer pela interface/)).toBeInTheDocument();
+  });
+
+  it("chama a rota de movimentação e recarrega a lista ao confirmar", async () => {
+    await comLista([{ id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false }]);
+    const listagensAntes = fetchMock.mock.calls.filter(
+      (c) => String(c[0]).startsWith("/api/transactions?") && !c[1]?.method,
+    ).length;
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mover" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/transactions/tx-1/move-to-family", {
+        method: "POST",
+      }),
+    );
+    await waitFor(() => {
+      const depois = fetchMock.mock.calls.filter(
+        (c) => String(c[0]).startsWith("/api/transactions?") && !c[1]?.method,
+      ).length;
+      expect(depois).toBeGreaterThan(listagensAntes);
+    });
+  });
+
+  it("fecha o diálogo depois de mover", async () => {
+    await comLista([{ id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mover" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("cancelar não move nada", async () => {
+    await comLista([{ id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false }]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).includes("move-to-family"))).toBe(false);
+  });
+
+  it("avisa que Pagamento vira Despesa no ledger da família", async () => {
+    await comLista([
+      { id: "tx-1", description: "PAGAMENTO FATURA", type: "PAYMENT", pendingReturn: false },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+
+    expect(screen.getByText(/entrará como Despesa/)).toBeInTheDocument();
+  });
+
+  it("não mostra o aviso de conversão em despesa e crédito", async () => {
+    await comLista([
+      { id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false },
+      { id: "tx-2", description: "SALÁRIO", type: "INCOME", pendingReturn: false },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+    expect(screen.queryByText(/entrará como Despesa/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-2" }));
+    expect(screen.queryByText(/entrará como Despesa/)).not.toBeInTheDocument();
+  });
+
+  it("move a transação escolhida, não a primeira da lista", async () => {
+    await comLista([
+      { id: "tx-1", description: "PADARIA", type: "EXPENSE", pendingReturn: false },
+      { id: "tx-2", description: "FEIRA", type: "EXPENSE", pendingReturn: false },
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-2" }));
+
+    expect(screen.getByText(/Mover "FEIRA"/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Mover" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/transactions/tx-2/move-to-family", {
+        method: "POST",
+      }),
+    );
+  });
+
+  it("mostra 'Movendo...' enquanto a rota não responde", async () => {
+    let liberar: () => void = () => {};
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("move-to-family")) {
+        await new Promise<void>((resolve) => {
+          liberar = resolve;
+        });
+        return { ok: true, json: async () => ({ ok: true }) };
+      }
+      if (init?.method) return { ok: true, json: async () => ({ ok: true }) };
+      if (url === "/api/categories") return { json: async () => categorias };
+      return { json: async () => [{ id: "tx-1", description: "PADARIA", type: "EXPENSE" }] };
+    });
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.click(screen.getByRole("button", { name: "mover tx-1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mover" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Movendo..." })).toBeInTheDocument(),
+    );
+    liberar();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 });

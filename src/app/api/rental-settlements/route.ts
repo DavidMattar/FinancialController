@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { createSettlement } from "@/lib/rentalSettlements";
 
 const createSchema = z.object({
-  type: z.enum(["DAVID", "FAMILIA"]),
+  type: z.enum(["DAVID", "FAMILIA", "LIMPEZA"]),
   periodFrom: z.string(),
   periodTo: z.string(),
 });
@@ -25,18 +25,21 @@ export async function GET() {
 
 /**
  * POST /api/rental-settlements
- * Gera um registro de repasse para um período e tipo (`DAVID` ou `FAMILIA`).
+ * Gera um registro de repasse para um período e tipo (`DAVID`, `FAMILIA` ou
+ * `LIMPEZA`).
  *
- * Existem dois tipos independentes de repasse porque são dois destinatários
+ * Existem três tipos independentes de repasse porque são três destinatários
  * diferentes com regras de cálculo diferentes:
  *   - DAVID: soma o campo "Total David" de cada aluguel do período ainda não
  *     fechado para David (`davidSettlementId` nulo).
  *   - FAMILIA: soma o "Valor líquido para distribuição" de cada aluguel do
  *     período ainda não fechado para a família (`familiaSettlementId` nulo) e
  *     divide o total por 2.
- * Por isso o SeasonalRental tem dois campos de FK de settlement separados —
- * um aluguel pode estar fechado para David mas ainda pendente para a família,
- * ou vice-versa, de forma totalmente independente.
+ *   - LIMPEZA: soma o "Valor da limpeza" de cada aluguel do período ainda não
+ *     fechado para a limpeza (`limpezaSettlementId` nulo), sem dividir.
+ * Por isso o SeasonalRental tem três campos de FK de settlement separados —
+ * um aluguel pode estar fechado para David mas ainda pendente para a família
+ * e para a limpeza, em qualquer combinação, de forma totalmente independente.
  */
 export async function POST(request: Request) {
   const body = await request.json();

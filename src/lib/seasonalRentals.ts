@@ -17,6 +17,7 @@ interface SeasonalRentalRecord {
   createdAt: Date;
   davidSettlementId: string | null;
   familiaSettlementId: string | null;
+  limpezaSettlementId: string | null;
   transactionId: string | null;
   expenses: { id: string; description: string; amount: unknown }[];
 }
@@ -72,6 +73,7 @@ export function serializeRentalWithComputed(rental: SeasonalRentalRecord) {
     createdAt: rental.createdAt,
     isDavidSettled: rental.davidSettlementId !== null,
     isFamiliaSettled: rental.familiaSettlementId !== null,
+    isLimpezaSettled: rental.limpezaSettlementId !== null,
     expenses,
     computed,
   };

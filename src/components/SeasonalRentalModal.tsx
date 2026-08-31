@@ -10,6 +10,10 @@
 // (mesmo um aluguel já com repasse fechado), essa mesma transação é
 // atualizada com o novo valor — o repasse já fechado em si não muda.
 //
+// O campo "Nota sobre a estadia" é uma observação livre daquele aluguel
+// (`SeasonalRental.notes`): aparece na lista de aluguéis e aqui, mas NÃO entra
+// no relatório de WhatsApp — é anotação interna, por decisão do usuário.
+//
 // O bloco "Valores das diárias" lista noite por noite a tarifa que a tabela de
 // preços (src/lib/rentalPriceTable.ts) aplica e permite sobrescrever cada uma
 // SÓ NESTE aluguel: o valor digitado é salvo em
@@ -32,8 +36,11 @@ interface RentalToEdit {
   checkOut: string;
   netAmountReceived: number;
   cleaningFee: number;
+  /** Observação livre sobre a estadia — `SeasonalRental.notes`. */
+  notes?: string | null;
   isDavidSettled: boolean;
   isFamiliaSettled: boolean;
+  isLimpezaSettled: boolean;
   expenses: { description: string; amount: number }[];
   /** Diárias já customizadas deste aluguel: { "YYYY-MM-DD": valor }. */
   nightRateOverrides?: Record<string, number> | null;
@@ -104,6 +111,7 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
   // Ao editar um aluguel existente já começa true, para não sobrescrever o
   // valor de limpeza já salvo com a sugestão padrão da tabela.
   const [cleaningFeeTouched, setCleaningFeeTouched] = useState(isEditing);
+  const [notes, setNotes] = useState(rental?.notes ?? "");
   const [expenses, setExpenses] = useState<ExpenseRow[]>(
     rental ? rental.expenses.map((e) => ({ description: e.description, amount: String(e.amount) })) : []
   );
@@ -246,6 +254,9 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
           checkOut,
           netAmountReceived: Number(netAmountReceived.replace(",", ".")),
           cleaningFee: Number((cleaningFee || "0").replace(",", ".")),
+          // Nota em branco é gravada como null (e não como ""), para "sem nota"
+          // ser um único valor no banco.
+          notes: notes.trim() === "" ? null : notes.trim(),
           // O mapa vai inteiro: o servidor substitui as diárias customizadas por
           // completo (mapa vazio = todas as noites voltam para a tabela).
           nightRateOverrides: numericNightRateOverrides,
@@ -276,7 +287,7 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
           {isEditing ? "Editar aluguel" : "Novo registro de aluguel"}
         </h2>
 
-        {isEditing && (rental.isDavidSettled || rental.isFamiliaSettled) && (
+        {isEditing && (rental.isDavidSettled || rental.isFamiliaSettled || rental.isLimpezaSettled) && (
           <p className="text-xs bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-md px-2 py-1.5">
             Este aluguel já teve repasse gerado. O valor do repasse já fechado não muda, mas o Total David
             será recalculado e a transação de crédito vinculada será atualizada com o novo valor.
@@ -461,6 +472,17 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
               </button>
             </div>
           ))}
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs text-slate-500 dark:text-slate-400">Nota sobre a estadia (opcional)</label>
+          <textarea
+            rows={3}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="ex: hóspede chegou tarde, pediu check-out estendido, quebrou uma taça"
+            className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm resize-y"
+          />
         </div>
 
         {previewError && <p className="text-sm text-red-600 dark:text-red-400">{previewError}</p>}

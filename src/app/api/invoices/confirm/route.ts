@@ -25,6 +25,10 @@ const transactionSchema = z.object({
   cardHolder: z.string().min(1),
   cardLastDigits: z.string().min(1),
   categoryId: z.string().nullable().optional(),
+  // Marcado na própria tela de revisão, antes de gravar — permite sinalizar
+  // vários lançamentos da mesma fatura de uma vez, em vez de abrir a transação
+  // uma por uma depois de importar.
+  pendingReturn: z.boolean().optional(),
 });
 
 /** Formato completo do corpo enviado pela tela de revisão da fatura. */
@@ -136,6 +140,7 @@ export async function POST(request: Request) {
       installmentCurrent: t.installmentCurrent ?? null,
       installmentTotal: t.installmentTotal ?? null,
       categoryId: t.categoryId ?? null,
+      pendingReturn: t.pendingReturn ?? false,
       // O `?? primaryCardId` é uma rede de segurança inalcançável na prática:
       // `cardIdByKey` foi montado logo acima a partir DESTAS mesmas transações,
       // então a chave sempre existe. Fica como proteção caso a montagem do mapa

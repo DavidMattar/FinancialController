@@ -336,6 +336,69 @@ describe("POST /api/invoices/confirm", () => {
     });
   });
 
+  it("grava pendingReturn marcado na tela de revisão", async () => {
+    await CONFIRM(
+      jsonRequest("POST", "/api/invoices/confirm", {
+        ...corpoValido,
+        transactions: [
+          { ...corpoValido.transactions[0], pendingReturn: true },
+          { ...corpoValido.transactions[0], description: "PADARIA", pendingReturn: false },
+        ],
+      }),
+    );
+
+    const criados = prisma.transaction.createMany.mock.calls[0][0].data;
+    expect(criados[0].pendingReturn).toBe(true);
+    expect(criados[1].pendingReturn).toBe(false);
+  });
+
+  it("pendingReturn é false quando o lançamento não traz o campo", async () => {
+    await CONFIRM(jsonRequest("POST", "/api/invoices/confirm", corpoValido));
+
+    expect(prisma.transaction.createMany.mock.calls[0][0].data[0].pendingReturn).toBe(false);
+  });
+
+  it("recusa pendingReturn que não é booleano com 400", async () => {
+    const { status } = await readJson(
+      await CONFIRM(
+        jsonRequest("POST", "/api/invoices/confirm", {
+          ...corpoValido,
+          transactions: [{ ...corpoValido.transactions[0], pendingReturn: "sim" }],
+        }),
+      ),
+    );
+
+    expect(status).toBe(400);
+  });
+
+  it("grava a descrição reescrita na tela de revisão", async () => {
+    // O parser extrai o nome do adquirente; a tela permite renomear antes de
+    // gravar, e é o texto renomeado que tem que chegar aqui.
+    await CONFIRM(
+      jsonRequest("POST", "/api/invoices/confirm", {
+        ...corpoValido,
+        transactions: [{ ...corpoValido.transactions[0], description: "Feira da semana" }],
+      }),
+    );
+
+    expect(prisma.transaction.createMany.mock.calls[0][0].data[0].description).toBe(
+      "Feira da semana",
+    );
+  });
+
+  it("recusa lançamento com descrição vazia com 400", async () => {
+    const { status } = await readJson(
+      await CONFIRM(
+        jsonRequest("POST", "/api/invoices/confirm", {
+          ...corpoValido,
+          transactions: [{ ...corpoValido.transactions[0], description: "" }],
+        }),
+      ),
+    );
+
+    expect(status).toBe(400);
+  });
+
   it("usa null nos campos opcionais ausentes do lançamento", async () => {
     await CONFIRM(
       jsonRequest("POST", "/api/invoices/confirm", {

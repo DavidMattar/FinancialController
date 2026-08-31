@@ -126,12 +126,83 @@ describe("previewSettlement — tipo FAMILIA", () => {
     expect(where).not.toHaveProperty("davidSettlementId");
   });
 
-  it("as duas trilhas são independentes (um mesmo aluguel pode estar em ambas)", async () => {
+  it("as trilhas são independentes (um mesmo aluguel pode estar em todas)", async () => {
     prisma.seasonalRental.findMany.mockResolvedValue([aluguel()]);
     const david = await previewSettlement("DAVID", "2026-06-01", "2026-06-30");
     const familia = await previewSettlement("FAMILIA", "2026-06-01", "2026-06-30");
+    const limpeza = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
     expect(david.totalAmount).toBe(250);
     expect(familia.totalAmount).toBe(285);
+    expect(limpeza.totalAmount).toBe(180);
+  });
+});
+
+describe("previewSettlement — tipo LIMPEZA", () => {
+  it("soma o valor da limpeza dos aluguéis pendentes, sem dividir", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([
+      aluguel(),
+      aluguel({ id: "rental-2", cleaningFee: "200.00" }),
+    ]);
+
+    const r = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+
+    expect(r.rentalCount).toBe(2);
+    // 180 + 200, sem rateio: é o valor cheio que se paga a quem limpa.
+    expect(r.totalAmount).toBe(380);
+  });
+
+  it("filtra por limpezaSettlementId nulo", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([]);
+    await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+    const where = prisma.seasonalRental.findMany.mock.calls[0][0].where;
+    expect(where.limpezaSettlementId).toBeNull();
+    expect(where).not.toHaveProperty("davidSettlementId");
+    expect(where).not.toHaveProperty("familiaSettlementId");
+  });
+
+  it("não é afetado por gastos extras nem por diárias customizadas", async () => {
+    // A limpeza é um campo informado direto no aluguel — nada no cálculo de
+    // tabela/extras mexe nela (ao contrário de David e Família).
+    prisma.seasonalRental.findMany.mockResolvedValue([
+      aluguel({
+        expenses: [{ id: "e1", description: "Gás", amount: "100.00" }],
+        nightRateOverrides: { "2026-06-09": 240 },
+      }),
+    ]);
+    const r = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+    expect(r.totalAmount).toBe(180);
+  });
+
+  it("aluguel sem limpeza informada não soma nada", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([aluguel({ cleaningFee: "0.00" })]);
+    const r = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+    expect(r.rentalCount).toBe(1);
+    expect(r.totalAmount).toBe(0);
+  });
+
+  it("devolve zero quando não há aluguel pendente", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([]);
+    const r = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+    expect(r).toEqual({ totalAmount: 0, rentalCount: 0, rentals: [] });
+  });
+});
+
+/**
+ * A soma das três trilhas de um aluguel tem que fechar exatamente o valor
+ * líquido recebido — é a invariante que justifica a trilha de limpeza existir
+ * como um terceiro destino, e não como um desconto embutido em outra.
+ */
+describe("as três trilhas somadas fecham o valor recebido", () => {
+  it("David + Limpeza + Família (valor cheio) = valor líquido recebido", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([aluguel()]);
+
+    const david = await previewSettlement("DAVID", "2026-06-01", "2026-06-30");
+    const limpeza = await previewSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+    const familia = await previewSettlement("FAMILIA", "2026-06-01", "2026-06-30");
+
+    // O total de FAMILIA já vem dividido por 2, então aqui usa-se o valor cheio.
+    const familiaCheio = familia.rentals[0].computed.netForDistribution;
+    expect(david.totalAmount + limpeza.totalAmount + familiaCheio).toBe(1000);
   });
 });
 
@@ -156,6 +227,23 @@ describe("createSettlement", () => {
       data: { davidSettlementId: "set-1" },
     });
     expect(r).toEqual({ id: "set-1", type: "DAVID" });
+  });
+
+  it("trava o campo certo no tipo LIMPEZA", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([aluguel()]);
+    prisma.rentalSettlement.create.mockResolvedValue({ id: "set-9", type: "LIMPEZA" });
+
+    await createSettlement("LIMPEZA", "2026-06-01", "2026-06-30");
+
+    expect(prisma.rentalSettlement.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ type: "LIMPEZA", totalAmount: 180, rentalCount: 1 }),
+      }),
+    );
+    expect(prisma.seasonalRental.updateMany).toHaveBeenCalledWith({
+      where: { id: { in: ["rental-1"] } },
+      data: { limpezaSettlementId: "set-9" },
+    });
   });
 
   it("trava o campo certo no tipo FAMILIA", async () => {

@@ -101,6 +101,34 @@ describe("POST /api/rental-settlements", () => {
     });
   });
 
+  it("gera o repasse LIMPEZA somando o valor da limpeza, sem dividir", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([
+      aluguelPendente(),
+      aluguelPendente({ id: "rent-2", cleaningFee: "200.00" }),
+    ]);
+    prisma.rentalSettlement.create.mockResolvedValue({
+      id: "set-3",
+      type: "LIMPEZA",
+      totalAmount: "380.00",
+    });
+
+    const { status } = await readJson(
+      await POST(
+        jsonRequest("POST", "/api/rental-settlements", {
+          type: "LIMPEZA",
+          periodFrom: "2026-06-01",
+          periodTo: "2026-06-30",
+        }),
+      ),
+    );
+
+    expect(status).toBe(201);
+    expect(prisma.rentalSettlement.create.mock.calls[0][0].data.totalAmount).toBe(380);
+    expect(prisma.seasonalRental.updateMany.mock.calls[0][0].data).toEqual({
+      limpezaSettlementId: "set-3",
+    });
+  });
+
   it("responde 422 quando não há aluguel pendente no período", async () => {
     prisma.seasonalRental.findMany.mockResolvedValue([]);
 
@@ -167,6 +195,25 @@ describe("GET /api/rental-settlements/preview", () => {
     expect(body.rentals[0].id).toBe("rent-1");
   });
 
+  it("aceita o tipo LIMPEZA e devolve a soma da limpeza", async () => {
+    prisma.seasonalRental.findMany.mockResolvedValue([aluguelPendente()]);
+
+    const { status, body } = await readJson(
+      await PREVIEW(
+        getRequest("/api/rental-settlements/preview", {
+          from: "2026-06-01",
+          to: "2026-06-30",
+          type: "LIMPEZA",
+        }),
+      ),
+    );
+
+    expect(status).toBe(200);
+    expect(body.totalAmount).toBe(180);
+    // O modal usa esse campo para mostrar o valor por aluguel na trilha LIMPEZA.
+    expect(body.rentals[0].cleaningFee).toBe(180);
+  });
+
   it("não grava nada", async () => {
     prisma.seasonalRental.findMany.mockResolvedValue([aluguelPendente()]);
 
@@ -222,6 +269,7 @@ describe("GET /api/rental-settlements/preview", () => {
       );
       expect(status).toBe(400);
       expect(body.error).toContain("Informe from, to e type");
+      expect(body.error).toContain("LIMPEZA");
     }
     expect(prisma.seasonalRental.findMany).not.toHaveBeenCalled();
   });

@@ -170,7 +170,7 @@ const familyTransactionSchema = z.object({
 
 const rentalSettlementSchema = z.object({
   id: idValue,
-  type: z.enum(["DAVID", "FAMILIA"]),
+  type: z.enum(["DAVID", "FAMILIA", "LIMPEZA"]),
   periodFrom: isoDateTime,
   periodTo: isoDateTime,
   totalAmount: decimalValue,
@@ -194,6 +194,9 @@ const seasonalRentalSchema = z.object({
   transactionId: z.string().nullish(),
   davidSettlementId: z.string().nullish(),
   familiaSettlementId: z.string().nullish(),
+  // `.nullish()` (e não obrigatório) para um backup gerado antes da trilha de
+  // limpeza existir continuar restaurável — mesmo motivo de `nightRateOverrides`.
+  limpezaSettlementId: z.string().nullish(),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
 });
@@ -595,6 +598,7 @@ async function insertBackup(
         transactionId: r.transactionId ?? null,
         davidSettlementId: r.davidSettlementId ?? null,
         familiaSettlementId: r.familiaSettlementId ?? null,
+        limpezaSettlementId: r.limpezaSettlementId ?? null,
         createdAt: toDate(r.createdAt),
         updatedAt: toDate(r.updatedAt),
       })),

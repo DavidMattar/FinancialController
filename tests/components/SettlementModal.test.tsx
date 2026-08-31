@@ -10,6 +10,8 @@ const aluguelPreview = {
   platform: "AIRBNB" as const,
   checkIn: "2026-08-08",
   checkOut: "2026-08-11",
+  // Base da trilha LIMPEZA: vem do preview da API, não é derivado do computed.
+  cleaningFee: 180,
   computed: { totalDavid: 250, netForDistribution: 570 },
 };
 
@@ -148,6 +150,51 @@ describe("SettlementModal — troca de tipo", () => {
     await waitFor(() => expect(screen.getByText(/570,00/)).toBeInTheDocument());
   });
 
+  it("trocar para Limpeza rebusca o preview e muda a explicação", async () => {
+    comPreview({ totalAmount: 180, rentalCount: 1, rentals: [aluguelPreview] });
+
+    render(<SettlementModal {...props} />);
+    await waitFor(() => expect(screen.getByText(/Total David/)).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpeza" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/rental-settlements/preview?type=LIMPEZA&from=2026-08-01&to=2026-08-31",
+      ),
+    );
+    expect(screen.getByText(/sem dividir/)).toBeInTheDocument();
+  });
+
+  it("no tipo Limpeza o valor por aluguel é o valor da limpeza", async () => {
+    comPreview({ totalAmount: 180, rentalCount: 1, rentals: [aluguelPreview] });
+
+    render(<SettlementModal {...props} />);
+    await waitFor(() => screen.getByText(/Airbnb/));
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpeza" }));
+
+    // Escopado na linha do aluguel: o mesmo valor reaparece no total do período.
+    await waitFor(() => {
+      const linha = screen.getByText(/Airbnb/).closest("li")!;
+      expect(norm(linha.textContent)).toContain(norm("R$ 180,00"));
+    });
+  });
+
+  it("o total da trilha Limpeza não mostra a divisão por 2", async () => {
+    comPreview({ totalAmount: 380, rentalCount: 2, rentals: [aluguelPreview, { ...aluguelPreview, id: "rent-2" }] });
+
+    render(<SettlementModal {...props} />);
+    // Dois aluguéis da mesma plataforma aqui, então a espera é pela linha do
+    // total (o `getByText(/Airbnb/)` acharia duas linhas e falharia).
+    await waitFor(() => expect(norm(linhaDoTotal())).toContain("2 aluguéis"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Limpeza" }));
+
+    await waitFor(() => expect(linhaDoTotal()).toContain("380,00"));
+    expect(linhaDoTotal()).not.toContain("÷ 2");
+  });
+
   it("destaca a aba ativa", async () => {
     comPreview({ totalAmount: 0, rentalCount: 0, rentals: [] });
 
@@ -155,6 +202,7 @@ describe("SettlementModal — troca de tipo", () => {
 
     expect(screen.getByRole("button", { name: "David" }).className).toContain("border-indigo-600");
     expect(screen.getByRole("button", { name: "Família" }).className).toContain("border-transparent");
+    expect(screen.getByRole("button", { name: "Limpeza" }).className).toContain("border-transparent");
 
     fireEvent.click(screen.getByRole("button", { name: "Família" }));
 
@@ -163,6 +211,7 @@ describe("SettlementModal — troca de tipo", () => {
         "border-indigo-600",
       ),
     );
+    expect(screen.getByRole("button", { name: "David" }).className).toContain("border-transparent");
   });
 
   it("trocar o período rebusca o preview", async () => {
@@ -238,6 +287,26 @@ describe("SettlementModal — gerar o repasse", () => {
     fireEvent.click(screen.getByRole("button", { name: "Gerar registro" }));
 
     await waitFor(() => expect(screen.getByText(/Registro gerado \(Família\)/)).toBeInTheDocument());
+  });
+
+  it("mostra o rótulo Limpeza no resultado quando é esse o tipo", async () => {
+    comPreview({ totalAmount: 180, rentalCount: 1, rentals: [aluguelPreview] }, { body: { totalAmount: 180 } });
+
+    render(<SettlementModal {...props} />);
+    await waitFor(() => screen.getByText(/Airbnb/));
+    fireEvent.click(screen.getByRole("button", { name: "Limpeza" }));
+    await waitFor(() => screen.getByText(/sem dividir/));
+
+    fireEvent.click(screen.getByRole("button", { name: "Gerar registro" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/rental-settlements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "LIMPEZA", periodFrom: "2026-08-01", periodTo: "2026-08-31" }),
+      }),
+    );
+    await waitFor(() => expect(screen.getByText(/Registro gerado \(Limpeza\)/)).toBeInTheDocument());
   });
 
   it("mostra o erro devolvido pela API", async () => {

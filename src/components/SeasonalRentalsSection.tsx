@@ -3,9 +3,13 @@
 // Seção do dashboard que lista todos os aluguéis de temporada cadastrados
 // (Airbnb/Booking), com os valores calculados de cada um (Total David e
 // Valor líquido para distribuição), botões para registrar um novo aluguel,
-// gerar o repasse do período (David ou Família) e gerar o relatório de
-// WhatsApp — este último é sempre por aluguel individual, não um relatório
+// gerar o repasse do período (David, Família ou Limpeza) e gerar o relatório
+// de WhatsApp — este último é sempre por aluguel individual, não um relatório
 // geral, a pedido explícito do usuário.
+//
+// A nota de cada aluguel é uma observação livre sobre aquela estadia. Aparece
+// aqui e no modal de edição, e NÃO entra no relatório de WhatsApp (decisão do
+// usuário: é anotação interna, não informação para o destinatário).
 
 import { useEffect, useState } from "react";
 import CollapsibleSection from "./CollapsibleSection";
@@ -28,8 +32,11 @@ interface Rental {
   checkOut: string;
   netAmountReceived: number;
   cleaningFee: number;
+  /** Observação livre sobre esta estadia (null/vazio = sem nota). */
+  notes?: string | null;
   isDavidSettled: boolean;
   isFamiliaSettled: boolean;
+  isLimpezaSettled: boolean;
   expenses: RentalExpense[];
   /** Diárias customizadas só deste aluguel: { "YYYY-MM-DD": valor }. Vazio = tudo pela tabela. */
   nightRateOverrides: Record<string, number>;
@@ -142,6 +149,11 @@ export default function SeasonalRentalsSection() {
                         ✓ Família
                       </span>
                     )}
+                    {r.isLimpezaSettled && (
+                      <span className="ml-2 text-xs px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900 text-sky-700 dark:text-sky-300">
+                        ✓ Limpeza
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     {/* Botão de relatório WhatsApp por aluguel individual (não existe um botão
@@ -171,6 +183,15 @@ export default function SeasonalRentalsSection() {
                     </button>
                   </div>
                 </div>
+
+                {/* Nota da estadia. `whitespace-pre-line` porque o usuário
+                    digita em um textarea e as quebras de linha dele fazem
+                    parte da observação. */}
+                {r.notes && (
+                  <p className="text-xs text-slate-600 dark:text-slate-300 whitespace-pre-line bg-slate-50 dark:bg-slate-900/50 border border-slate-100 dark:border-slate-700 rounded-md px-2 py-1.5">
+                    {r.notes}
+                  </p>
+                )}
 
                 {r.expenses.length > 0 && (
                   <ul className="text-xs text-slate-500 dark:text-slate-400 pl-3 list-disc">

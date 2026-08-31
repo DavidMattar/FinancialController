@@ -17,6 +17,12 @@ interface Props {
   // Se informado, mostra uma coluna extra com o botão "excluir".
   onDelete?: (transactionId: string) => void;
   onPendingReturnChange?: (transactionId: string, value: boolean) => void;
+  // Se informado, cada linha ganha um botão "→ Família", que move a transação
+  // para o ledger isolado da família. Só a página /transacoes passa esse
+  // callback — no dashboard e em /receitas a tabela é somente de leitura.
+  // Recebe a transação inteira (e não só o id, como onDelete) porque o diálogo
+  // de confirmação precisa da descrição e do tipo para montar o aviso.
+  onMoveToFamily?: (transaction: Transaction) => void;
 }
 
 // Tradução dos valores do enum TransactionType (banco de dados) para rótulos em português.
@@ -32,6 +38,7 @@ export default function TransactionsTable({
   onCategoryChange,
   onDelete,
   onPendingReturnChange,
+  onMoveToFamily,
 }: Props) {
   // Guarda o id da transação cuja linha de detalhamento está aberta (só uma por vez); null = nenhuma aberta.
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -40,9 +47,10 @@ export default function TransactionsTable({
     return <p className="text-sm text-slate-500 dark:text-slate-400 py-4">Nenhuma transação encontrada.</p>;
   }
 
-  // O número de colunas da tabela muda dependendo se a coluna "excluir" está presente,
-  // e é usado no colSpan da linha de detalhamento expandida para ela ocupar a largura toda.
-  const columnCount = onDelete ? 7 : 6;
+  // O número de colunas da tabela muda conforme as colunas de ação presentes
+  // (excluir e/ou mover para Família), e é usado no colSpan da linha de
+  // detalhamento expandida para ela ocupar a largura toda.
+  const columnCount = 6 + (onDelete ? 1 : 0) + (onMoveToFamily ? 1 : 0);
 
   return (
     <div className="overflow-x-auto">
@@ -55,6 +63,7 @@ export default function TransactionsTable({
             <th className="py-2 pr-4">Categoria</th>
             <th className="py-2 pr-4">Tipo</th>
             <th className="py-2 pr-4 text-right">Valor</th>
+            {onMoveToFamily && <th className="py-2 pl-2" />}
             {onDelete && <th className="py-2 pl-2" />}
           </tr>
         </thead>
@@ -141,6 +150,18 @@ export default function TransactionsTable({
                     {t.type === "PAYMENT" ? "-" : ""}
                     {formatBRL(Number(t.amount))}
                   </td>
+                  {onMoveToFamily && (
+                    <td className="py-2 pl-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => onMoveToFamily(t)}
+                        title="Mover esta transação para o ledger de Transações Família"
+                        className="text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 text-xs whitespace-nowrap"
+                      >
+                        → Família
+                      </button>
+                    </td>
+                  )}
                   {onDelete && (
                     <td className="py-2 pl-2 text-right">
                       <button

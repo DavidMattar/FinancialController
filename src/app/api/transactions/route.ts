@@ -15,6 +15,11 @@ const createSchema = z.object({
   categoryId: z.string().nullable().optional(),
   creditCardId: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  // Marcado já na criação, pelo checkbox "verificar devolução" do formulário
+  // manual. Diferente do painel da transação já existente (que só oferece a
+  // opção para compra de e-commerce no cartão), aqui não há filtro: quem está
+  // lançando é que sabe o que precisa acompanhar.
+  pendingReturn: z.boolean().optional(),
 });
 
 /**
@@ -117,6 +122,7 @@ export async function POST(request: Request) {
       categoryId,
       creditCardId: data.creditCardId ?? null,
       notes: data.notes ?? null,
+      pendingReturn: data.pendingReturn ?? false,
       source: "MANUAL",
     },
     include: { category: true, creditCard: true },

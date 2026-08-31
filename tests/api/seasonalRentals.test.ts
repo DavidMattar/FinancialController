@@ -191,6 +191,19 @@ describe("POST /api/seasonal-rentals", () => {
     expect(data.notes).toBeNull();
   });
 
+  it("grava a nota da estadia informada na criação", async () => {
+    await POST(
+      jsonRequest("POST", "/api/seasonal-rentals", {
+        ...corpoValido,
+        notes: "Hóspede pediu check-out mais tarde.",
+      }),
+    );
+
+    expect(prisma.seasonalRental.create.mock.calls[0][0].data.notes).toBe(
+      "Hóspede pediu check-out mais tarde.",
+    );
+  });
+
   it("aceita valor recebido zero", async () => {
     const { status } = await readJson(
       await POST(

@@ -1,11 +1,13 @@
 "use client";
 
 // Modal para "fechar o repasse" de um período de aluguéis de temporada.
-// Existem dois tipos de repasse, completamente independentes um do outro:
+// Existem três tipos de repasse, completamente independentes entre si:
 // - DAVID: soma o "Total David" (o que ele recebe) de cada aluguel ainda não
 //   fechado nesse tipo, dentro do período escolhido.
 // - FAMILIA: soma o "Valor líquido para distribuição" de cada aluguel ainda
 //   não fechado nesse tipo, no período, e divide o total por 2.
+// - LIMPEZA: soma o "Valor da limpeza" de cada aluguel ainda não fechado nesse
+//   tipo, no período, sem dividir — é o que sai para pagar quem limpa.
 // Gerar o repasse é uma ação permanente: os aluguéis incluídos ficam
 // marcados como fechados para aquele tipo e não há como desfazer pela
 // interface (decisão explícita do usuário — ver SeasonalRentalsSection.tsx).
@@ -15,13 +17,15 @@ import DateRangePicker from "./DateRangePicker";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
 import { formatBRL, formatDate } from "@/lib/format";
 
-type SettlementType = "DAVID" | "FAMILIA";
+type SettlementType = "DAVID" | "FAMILIA" | "LIMPEZA";
 
 interface PreviewRental {
   id: string;
   platform: "AIRBNB" | "BOOKING";
   checkIn: string;
   checkOut: string;
+  /** Base da trilha LIMPEZA — o valor de limpeza informado naquele aluguel. */
+  cleaningFee: number;
   computed: { totalDavid: number; netForDistribution: number };
 }
 
@@ -37,6 +41,25 @@ interface Props {
 }
 
 const PLATFORM_LABEL: Record<PreviewRental["platform"], string> = { AIRBNB: "Airbnb", BOOKING: "Booking" };
+
+/** Ordem das abas do modal — uma por trilha de repasse. */
+const SETTLEMENT_TYPES: readonly SettlementType[] = ["DAVID", "FAMILIA", "LIMPEZA"];
+
+const SETTLEMENT_LABEL: Record<SettlementType, string> = {
+  DAVID: "David",
+  FAMILIA: "Família",
+  LIMPEZA: "Limpeza",
+};
+
+/** Explicação de qual valor cada trilha soma, exibida abaixo das abas. */
+const SETTLEMENT_HELP: Record<SettlementType, string> = {
+  DAVID:
+    'Soma o "Total David" de todos os aluguéis (desse tipo, ainda não fechados) cuja saída está no período escolhido.',
+  FAMILIA:
+    'Soma o "Valor líquido para distribuição" de todos os aluguéis (desse tipo, ainda não fechados) no período, e divide o total por 2.',
+  LIMPEZA:
+    'Soma o "Valor da limpeza" de todos os aluguéis (desse tipo, ainda não fechados) no período, sem dividir — é o valor que sai para pagar quem limpa.',
+};
 
 export default function SettlementModal({ onClose, onGenerated }: Props) {
   const [type, setType] = useState<SettlementType>("DAVID");
@@ -82,8 +105,14 @@ export default function SettlementModal({ onClose, onGenerated }: Props) {
     }
   }
 
-  /** Valor exibido por aluguel na lista de preview: Total David ou Valor líquido para distribuição, conforme o tipo escolhido. */
-  const perRentalValue = (r: PreviewRental) => (type === "DAVID" ? r.computed.totalDavid : r.computed.netForDistribution);
+  /**
+   * Valor exibido por aluguel na lista de preview, conforme a trilha escolhida:
+   * Total David, valor da limpeza ou valor líquido para distribuição. Espelha
+   * o `rentalShare` de src/lib/rentalSettlements.ts — se um dos dois mudar, o
+   * outro precisa mudar junto, senão a lista não bate com o total gerado.
+   */
+  const perRentalValue = (r: PreviewRental) =>
+    type === "DAVID" ? r.computed.totalDavid : type === "LIMPEZA" ? r.cleaningFee : r.computed.netForDistribution;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -94,39 +123,27 @@ export default function SettlementModal({ onClose, onGenerated }: Props) {
         <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Fechar repasse do período</h2>
 
         <div className="flex gap-1 border-b border-slate-200 dark:border-slate-700">
-          <button
-            type="button"
-            onClick={() => setType("DAVID")}
-            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              type === "DAVID"
-                ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
-                : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-            }`}
-          >
-            David
-          </button>
-          <button
-            type="button"
-            onClick={() => setType("FAMILIA")}
-            className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              type === "FAMILIA"
-                ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
-                : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-            }`}
-          >
-            Família
-          </button>
+          {SETTLEMENT_TYPES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setType(t)}
+              className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                type === t
+                  ? "border-indigo-600 text-indigo-600 dark:text-indigo-400"
+                  : "border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              }`}
+            >
+              {SETTLEMENT_LABEL[t]}
+            </button>
+          ))}
         </div>
 
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          {type === "DAVID"
-            ? "Soma o \"Total David\" de todos os aluguéis (desse tipo, ainda não fechados) cuja saída está no período escolhido."
-            : "Soma o \"Valor líquido para distribuição\" de todos os aluguéis (desse tipo, ainda não fechados) no período, e divide o total por 2."}
-        </p>
+        <p className="text-xs text-slate-500 dark:text-slate-400">{SETTLEMENT_HELP[type]}</p>
 
         {result ? (
           <div className="bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-lg p-3 text-sm text-emerald-800 dark:text-emerald-300">
-            Registro gerado ({type === "DAVID" ? "David" : "Família"}): {formatBRL(result.totalAmount)} referente ao
+            Registro gerado ({SETTLEMENT_LABEL[type]}): {formatBRL(result.totalAmount)} referente ao
             período {formatDate(range.from)} – {formatDate(range.to)}.
           </div>
         ) : (

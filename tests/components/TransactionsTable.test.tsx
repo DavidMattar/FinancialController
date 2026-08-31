@@ -70,6 +70,34 @@ describe("TransactionsTable — estado vazio e cabeçalho", () => {
     );
     expect(screen.getAllByRole("columnheader")).toHaveLength(7);
   });
+
+  it("acrescenta a coluna de mover só quando onMoveToFamily é informado", () => {
+    const { rerender } = render(
+      <TransactionsTable transactions={[transacao()]} categories={categorias} />,
+    );
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+
+    rerender(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onMoveToFamily={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+  });
+
+  it("as duas colunas de ação somam 8 cabeçalhos", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDelete={vi.fn()}
+        onMoveToFamily={vi.fn()}
+      />,
+    );
+    expect(screen.getAllByRole("columnheader")).toHaveLength(8);
+  });
 });
 
 describe("TransactionsTable — conteúdo da linha", () => {
@@ -258,6 +286,47 @@ describe("TransactionsTable — exclusão", () => {
     expect(onDelete).toHaveBeenCalledWith("tx-1");
   });
 
+  it("avisa o id ao clicar em mover para a família", () => {
+    const onMoveToFamily = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onMoveToFamily={onMoveToFamily}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "→ Família" }));
+
+    // Recebe a transação inteira, não só o id: o diálogo de confirmação da
+    // página precisa da descrição e do tipo.
+    expect(onMoveToFamily).toHaveBeenCalledWith(expect.objectContaining({ id: "tx-1" }));
+  });
+
+  it("sem onMoveToFamily não existe botão de mover", () => {
+    render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
+
+    expect(screen.queryByRole("button", { name: "→ Família" })).not.toBeInTheDocument();
+  });
+
+  it("cada linha tem seu próprio botão de mover", () => {
+    const onMoveToFamily = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao(), transacao({ id: "tx-2" })]}
+        categories={categorias}
+        onMoveToFamily={onMoveToFamily}
+      />,
+    );
+
+    const botoes = screen.getAllByRole("button", { name: "→ Família" });
+    expect(botoes).toHaveLength(2);
+
+    fireEvent.click(botoes[1]);
+
+    expect(onMoveToFamily).toHaveBeenCalledWith(expect.objectContaining({ id: "tx-2" }));
+  });
+
   it("sem onDelete não existe botão de excluir", () => {
     render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
     expect(screen.queryByRole("button", { name: "excluir" })).not.toBeInTheDocument();
@@ -311,6 +380,21 @@ describe("TransactionsTable — detalhamento expansível", () => {
     fireEvent.click(screen.getByText("SUPERMERCADO BH"));
 
     expect(screen.getByTestId("painel-itens").closest("td")).toHaveAttribute("colSpan", "7");
+  });
+
+  it("o colSpan cresce com a coluna de mover", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDelete={vi.fn()}
+        onMoveToFamily={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SUPERMERCADO BH"));
+
+    expect(screen.getByTestId("painel-itens").closest("td")).toHaveAttribute("colSpan", "8");
   });
 
   it("sem a coluna de excluir, o colSpan é 6", () => {

@@ -220,10 +220,25 @@ deste projeto. Evite repeti-las.
    relação entre eles achando que é uma correção — é uma decisão de
    design explícita do usuário (ver comentários no `schema.prisma`).
 
+   Existe um caminho de MOVIMENTAÇÃO de uma transação do ledger principal
+   para o da família (`POST /api/transactions/[id]/move-to-family`), e ele
+   não fura o isolamento: copia só os campos que a família tem, apaga a
+   transação original e não deixa nenhuma referência entre as tabelas.
+   Categoria, cartão, fatura, parcelamento e devolução pendente são
+   perdidos de propósito — não tente "preservar" esses dados criando
+   colunas novas em `FamilyTransaction`.
+
 7. **Repasses (`RentalSettlement`) são permanentes por design.** O
    usuário pediu e depois retirou explicitamente o pedido de uma função
    de cancelar/desfazer um repasse já gerado — não adicione essa
    funcionalidade a menos que seja pedida de novo.
+
+   São **três** trilhas independentes (`DAVID`, `FAMILIA`, `LIMPEZA`),
+   cada uma com sua própria coluna de trava no `SeasonalRental`. Ao
+   acrescentar uma quarta, o único lugar a mexer na lógica é
+   `src/lib/rentalSettlements.ts` (mapa `SETTLEMENT_FIELD` + função
+   `rentalShare`) — mas o `perRentalValue` do `SettlementModal` precisa
+   mudar junto, senão a lista do preview não bate com o total gerado.
 
 8. **`tableValue` (valor de tabela do aluguel) nunca é salvo no banco** —
    é sempre recalculado a partir de `src/lib/rentalPriceTable.ts` na hora
@@ -348,7 +363,7 @@ O que é bom saber antes de confiar nisso:
 
 ## 9. Rodar os testes
 
-O projeto tem uma suíte de **1151 testes** (Vitest + Testing Library)
+O projeto tem uma suíte de **1242 testes** (Vitest + Testing Library)
 cobrindo **100% de `src/`**. Ela não depende de banco nem de internet —
 `src/lib/prisma` e o `fetch` são substituídos por dublês —, então dá para
 rodar antes mesmo de configurar o PostgreSQL:

@@ -4,9 +4,11 @@
  * Página "/transacoes" — lista completa de transações (despesas, receitas e
  * pagamentos de fatura) com filtros por período, categoria, tipo e busca por
  * texto. Também permite criar uma transação manualmente através do
- * formulário `ManualTransactionForm`, definido mais abaixo neste arquivo.
+ * formulário `ManualTransactionForm`, definido mais abaixo neste arquivo, e
+ * mover uma transação para o ledger isolado da família.
  */
 import { useEffect, useState } from "react";
+import ConfirmDialog from "@/components/ConfirmDialog";
 import DateRangePicker from "@/components/DateRangePicker";
 import TransactionsTable from "@/components/TransactionsTable";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
@@ -21,6 +23,9 @@ export default function TransacoesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  // Transação aguardando confirmação de movimentação para a família (null = nenhuma).
+  const [toMove, setToMove] = useState<Transaction | null>(null);
+  const [moving, setMoving] = useState(false);
 
   // Carrega as categorias uma única vez, para popular o filtro e o formulário.
   useEffect(() => {
@@ -67,6 +72,47 @@ export default function TransacoesPage() {
   /** Atualiza localmente (sem ida ao servidor) o marcador de "devolução pendente" já persistido por outro componente. */
   function handlePendingReturnChange(id: string, value: boolean) {
     setTransactions((prev) => prev.map((t) => (t.id === id ? { ...t, pendingReturn: value } : t)));
+  }
+
+  /**
+   * Confirma a movimentação para o ledger da família: a rota cria a
+   * `FamilyTransaction` e apaga a `Transaction` na mesma transação do banco, então
+   * aqui basta recarregar a lista — a transação movida simplesmente não volta.
+   */
+  async function handleConfirmMove() {
+    // Guard de tipo: o diálogo só abre com uma transação selecionada.
+    /* v8 ignore next */
+    if (!toMove) return;
+    setMoving(true);
+    try {
+      await fetch(`/api/transactions/${toMove.id}/move-to-family`, { method: "POST" });
+      setToMove(null);
+      load();
+    } finally {
+      setMoving(false);
+    }
+  }
+
+  /**
+   * Texto do diálogo de confirmação. É explícito sobre o que se perde porque o
+   * ledger da família é isolado de propósito (não tem categoria, cartão,
+   * fatura, parcelamento nem devolução pendente) e o movimento não tem desfazer.
+   */
+  function moveMessage(t: Transaction): string {
+    const linhas = [
+      `Mover "${t.description}" para Transações Família?`,
+      "",
+      "A transação sai do ledger principal (deixa de contar em relatórios, métricas e orçamento) e passa a existir só no ledger da família.",
+      "Categoria, cartão, fatura, parcelamento, devolução pendente e sub-itens são perdidos — o ledger da família não tem esses campos.",
+    ];
+    if (t.type === "PAYMENT") {
+      linhas.push(
+        "",
+        'Esta transação é do tipo Pagamento, que não existe no ledger da família — ela entrará como Despesa.',
+      );
+    }
+    linhas.push("", "Não há como desfazer pela interface.");
+    return linhas.join("\n");
   }
 
   return (
@@ -136,9 +182,20 @@ export default function TransacoesPage() {
             onCategoryChange={handleCategoryChange}
             onDelete={handleDelete}
             onPendingReturnChange={handlePendingReturnChange}
+            onMoveToFamily={setToMove}
           />
         )}
       </div>
+
+      <ConfirmDialog
+        open={toMove !== null}
+        title="Mover para Transações Família"
+        message={toMove ? moveMessage(toMove) : ""}
+        confirmLabel={moving ? "Movendo..." : "Mover"}
+        danger={false}
+        onConfirm={handleConfirmMove}
+        onCancel={() => setToMove(null)}
+      />
     </div>
   );
 }
@@ -156,10 +213,15 @@ function ManualTransactionForm({
   categories: Category[];
   onCreated: () => void;
 }) {
+  // "Verificar devolução" já na criação. Sem a trava de e-commerce que o painel
+  // da transação existente usa (ver TransactionItemsPanel): na hora de lançar,
+  // quem decide o que precisa de acompanhamento é o usuário — pode ser uma
+  // compra em loja física, um serviço, um adiantamento.
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [pendingReturn, setPendingReturn] = useState(false);
   const [type, setType] = useState<"EXPENSE" | "INCOME" | "PAYMENT">("EXPENSE");
   const [submitting, setSubmitting] = useState(false);
 
@@ -188,6 +250,7 @@ function ManualTransactionForm({
           amount: Number(amount.replace(",", ".")),
           type,
           categoryId: categoryId || null,
+          pendingReturn,
         }),
       });
       onCreated();
@@ -258,6 +321,14 @@ function ManualTransactionForm({
           ))}
         </select>
       </div>
+      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 col-span-2 sm:col-span-4">
+        <input
+          type="checkbox"
+          checked={pendingReturn}
+          onChange={(e) => setPendingReturn(e.target.checked)}
+        />
+        Verificar devolução (item pendente de acompanhamento)
+      </label>
       <button
         type="submit"
         disabled={submitting}

@@ -254,13 +254,15 @@ model SeasonalRental {
   // Soft reference to the auto-generated income Transaction (Total David),
   // not a Prisma relation — keeps the main Transaction model untouched.
   transactionId       String?
-  // David and Família settlements are independent tracks — a rental can be
-  // closed for one without being closed for the other, hence two separate
-  // nullable FKs into the same RentalSettlement table.
+  // David, Família and Limpeza settlements are independent tracks — a rental
+  // can be closed for one without being closed for the others, hence three
+  // separate nullable FKs into the same RentalSettlement table.
   davidSettlementId   String?
   davidSettlement     RentalSettlement?       @relation("DavidSettlementRentals", fields: [davidSettlementId], references: [id])
   familiaSettlementId String?
   familiaSettlement   RentalSettlement?       @relation("FamiliaSettlementRentals", fields: [familiaSettlementId], references: [id])
+  limpezaSettlementId String?
+  limpezaSettlement   RentalSettlement?       @relation("LimpezaSettlementRentals", fields: [limpezaSettlementId], references: [id])
   createdAt           DateTime                 @default(now())
   updatedAt           DateTime                 @updatedAt
   expenses            SeasonalRentalExpense[]
@@ -272,14 +274,20 @@ model SeasonalRental {
 enum RentalSettlementType {
   DAVID
   FAMILIA
+  LIMPEZA
 }
 
-/// A "closing"/payout record for either track:
+/// A "closing"/payout record for one of the three tracks:
 /// - DAVID: sum of "Total David" for matching rentals.
 /// - FAMILIA: sum of "Valor líquido para distribuição" for matching rentals,
 ///   divided by 2 at the end (split between the two family members).
-/// Generating one links the matching rentals to it (davidSettlementId or
-/// familiaSettlementId, depending on `type`) so they aren't counted again.
+/// - LIMPEZA: sum of "Valor da limpeza" (cleaningFee) for matching rentals,
+///   with NO division — it is what gets paid to whoever cleans the place.
+///   The three tracks add up to netAmountReceived, because netForDistribution
+///   is already netAmountReceived - totalDavid - cleaningFee.
+/// Generating one links the matching rentals to it (davidSettlementId,
+/// familiaSettlementId or limpezaSettlementId, depending on `type`) so they
+/// aren't counted again.
 model RentalSettlement {
   id             String               @id @default(cuid())
   type           RentalSettlementType
@@ -290,6 +298,7 @@ model RentalSettlement {
   createdAt      DateTime             @default(now())
   davidRentals   SeasonalRental[]     @relation("DavidSettlementRentals")
   familiaRentals SeasonalRental[]     @relation("FamiliaSettlementRentals")
+  limpezaRentals SeasonalRental[]     @relation("LimpezaSettlementRentals")
 }
 
 /// Um item de gasto extra associado a um aluguel específico (ex: reposição de

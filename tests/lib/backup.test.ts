@@ -144,6 +144,7 @@ const registros = {
     transactionId: "tx-1",
     davidSettlementId: "set-1",
     familiaSettlementId: null,
+    limpezaSettlementId: null,
     createdAt: ISO,
     updatedAt: ISO,
   },
@@ -600,6 +601,32 @@ describe("restoreBackup — conversão dos valores", () => {
     expect(args.data[0].transactionId).toBe("tx-1");
     expect(args.data[0].davidSettlementId).toBe("set-1");
     expect(args.data[0].familiaSettlementId).toBeNull();
+    expect(args.data[0].limpezaSettlementId).toBeNull();
+  });
+
+  it("restaura a trilha de limpeza fechada", async () => {
+    const data = dataCompleta();
+    data.seasonalRentals = [{ ...registros.seasonalRentals, limpezaSettlementId: "set-3" }];
+    const args = await inserirEObter("seasonalRental", data);
+    expect(args.data[0].limpezaSettlementId).toBe("set-3");
+  });
+
+  it("um backup gerado antes da trilha de limpeza existir continua restaurável", async () => {
+    // Arquivo antigo: a chave simplesmente não existe. O zod usa `.nullish()`,
+    // então o registro é aceito e a trilha entra como aberta.
+    const data = dataCompleta();
+    const aluguelAntigo = { ...registros.seasonalRentals } as Record<string, unknown>;
+    delete aluguelAntigo.limpezaSettlementId;
+    data.seasonalRentals = [aluguelAntigo];
+    const args = await inserirEObter("seasonalRental", data);
+    expect(args.data[0].limpezaSettlementId).toBeNull();
+  });
+
+  it("aceita um repasse do tipo LIMPEZA no arquivo", async () => {
+    const data = dataCompleta();
+    data.rentalSettlements = [{ ...registros.rentalSettlements, id: "set-3", type: "LIMPEZA" }];
+    const args = await inserirEObter("rentalSettlement", data);
+    expect(args.data[0].type).toBe("LIMPEZA");
   });
 
   it("grava os filtros de uma view salva como Json", async () => {
@@ -721,6 +748,7 @@ describe("restoreBackup — campos opcionais", () => {
         transactionId: null,
         davidSettlementId: null,
         familiaSettlementId: null,
+        limpezaSettlementId: null,
       },
     ];
 
@@ -744,6 +772,7 @@ describe("restoreBackup — campos opcionais", () => {
       transactionId: null,
       davidSettlementId: null,
       familiaSettlementId: null,
+      limpezaSettlementId: null,
     });
   });
 
@@ -756,6 +785,7 @@ describe("restoreBackup — campos opcionais", () => {
         ...registros.seasonalRentals,
         notes: "hóspede recorrente",
         familiaSettlementId: "set-2",
+        limpezaSettlementId: "set-3",
       },
     ];
 
@@ -770,6 +800,7 @@ describe("restoreBackup — campos opcionais", () => {
     expect(prisma.seasonalRental.createMany.mock.calls[0][0].data[0]).toMatchObject({
       notes: "hóspede recorrente",
       familiaSettlementId: "set-2",
+      limpezaSettlementId: "set-3",
     });
   });
 

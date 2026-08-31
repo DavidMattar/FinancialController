@@ -133,6 +133,41 @@ describe("POST /api/transactions", () => {
     prisma.category.findUnique.mockResolvedValue(null);
   });
 
+  it("grava pendingReturn quando o formulário marca a verificação de devolução", async () => {
+    await POST(jsonRequest("POST", "/api/transactions", { ...corpoValido, pendingReturn: true }));
+
+    expect(prisma.transaction.create.mock.calls[0][0].data.pendingReturn).toBe(true);
+  });
+
+  it("pendingReturn é false quando não vem no corpo", async () => {
+    await POST(jsonRequest("POST", "/api/transactions", corpoValido));
+
+    expect(prisma.transaction.create.mock.calls[0][0].data.pendingReturn).toBe(false);
+  });
+
+  it("aceita pendingReturn em qualquer tipo e descrição (sem trava de e-commerce)", async () => {
+    // A lista de ecommerceMerchants.ts filtra a UI do painel da transação já
+    // criada; na criação quem decide o que acompanhar é o usuário.
+    await POST(
+      jsonRequest("POST", "/api/transactions", {
+        ...corpoValido,
+        description: "PADARIA DA ESQUINA",
+        type: "INCOME",
+        pendingReturn: true,
+      }),
+    );
+
+    expect(prisma.transaction.create.mock.calls[0][0].data.pendingReturn).toBe(true);
+  });
+
+  it("recusa pendingReturn que não é booleano", async () => {
+    const { status } = await readJson(
+      await POST(jsonRequest("POST", "/api/transactions", { ...corpoValido, pendingReturn: "sim" })),
+    );
+
+    expect(status).toBe(400);
+  });
+
   it("cria a transação como MANUAL e responde 201", async () => {
     const { status, body } = await readJson(
       await POST(jsonRequest("POST", "/api/transactions", corpoValido)),

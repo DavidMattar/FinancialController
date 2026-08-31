@@ -100,8 +100,10 @@ const aluguelExistente = {
   checkOut: "2026-06-11T03:00:00.000Z",
   netAmountReceived: 1000,
   cleaningFee: 200,
+  notes: null as string | null,
   isDavidSettled: false,
   isFamiliaSettled: false,
+  isLimpezaSettled: false,
   expenses: [{ description: "Gás", amount: 60 }],
   nightRateOverrides: null,
 };
@@ -664,6 +666,18 @@ describe("SeasonalRentalModal — edição", () => {
     expect(screen.getByText(/transação de crédito vinculada será atualizada/)).toBeInTheDocument();
   });
 
+  it("avisa também quando só o repasse de limpeza foi fechado", async () => {
+    comRespostas();
+    render(
+      <SeasonalRentalModal
+        {...props}
+        rental={{ ...aluguelExistente, isLimpezaSettled: true }}
+      />,
+    );
+
+    expect(screen.getByText(/já teve repasse gerado/)).toBeInTheDocument();
+  });
+
   it("não mostra o aviso de repasse quando nenhum foi fechado", async () => {
     comRespostas();
     render(<SeasonalRentalModal {...props} rental={aluguelExistente} />);
@@ -820,5 +834,101 @@ describe("SeasonalRentalModal — casos de borda", () => {
     fireEvent.submit(document.querySelector("form")!);
 
     await waitFor(() => expect(corpoSalvo().cleaningFee).toBe(0));
+  });
+});
+
+/**
+ * A nota é observação livre sobre a estadia (`SeasonalRental.notes`). É o único
+ * campo de texto do formulário, e o único que não entra em nenhum cálculo — o
+ * que importa aqui é ida e volta do valor e a normalização de "sem nota".
+ */
+describe("SeasonalRentalModal — nota da estadia", () => {
+  it("começa vazia em um novo aluguel", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+
+    expect(campoPorRotulo(/Nota sobre a estadia/)).toHaveValue("");
+  });
+
+  it("envia a nota digitada ao salvar", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.change(campoPorRotulo(/Nota sobre a estadia/), {
+      target: { value: "Hóspede pediu check-out mais tarde." },
+    });
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().notes).toBe("Hóspede pediu check-out mais tarde."));
+  });
+
+  it("preserva as quebras de linha da observação", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.change(campoPorRotulo(/Nota sobre a estadia/), {
+      target: { value: "Linha 1\nLinha 2" },
+    });
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().notes).toBe("Linha 1\nLinha 2"));
+  });
+
+  it("nota em branco é salva como null (e não como string vazia)", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().notes).toBeNull());
+  });
+
+  it("nota só com espaços também vira null", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.change(campoPorRotulo(/Nota sobre a estadia/), { target: { value: "   " } });
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().notes).toBeNull());
+  });
+
+  it("abre pré-preenchida com a nota salva na edição", async () => {
+    comRespostas();
+    render(
+      <SeasonalRentalModal {...props} rental={{ ...aluguelExistente, notes: "Quebrou uma taça." }} />,
+    );
+
+    expect(campoPorRotulo(/Nota sobre a estadia/)).toHaveValue("Quebrou uma taça.");
+  });
+
+  it("apagar a nota de um aluguel que tinha uma salva envia null", async () => {
+    comRespostas();
+    render(
+      <SeasonalRentalModal {...props} rental={{ ...aluguelExistente, notes: "Nota antiga" }} />,
+    );
+    await vi.advanceTimersByTimeAsync(300);
+    await waitFor(() => screen.getByText("Total David"));
+
+    fireEvent.change(campoPorRotulo(/Nota sobre a estadia/), { target: { value: "" } });
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().notes).toBeNull());
+  });
+
+  it("a nota é sempre opcional (nunca bloqueia o envio)", async () => {
+    const onSaved = vi.fn();
+    comRespostas();
+    render(<SeasonalRentalModal {...props} onSaved={onSaved} />);
+    await preencherEEsperarPreview();
+
+    expect(campoPorRotulo(/Nota sobre a estadia/)).not.toBeRequired();
+
+    fireEvent.submit(document.querySelector("form")!);
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
   });
 });

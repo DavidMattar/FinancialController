@@ -91,6 +91,7 @@ describe("serializeRentalWithComputed", () => {
     createdAt: new Date(2026, 5, 1),
     davidSettlementId: null as string | null,
     familiaSettlementId: null as string | null,
+    limpezaSettlementId: null as string | null,
     transactionId: "tx-1" as string | null,
     expenses: [] as { id: string; description: string; amount: unknown }[],
   };
@@ -142,18 +143,29 @@ describe("serializeRentalWithComputed", () => {
     const aberto = serializeRentalWithComputed({ ...base });
     expect(aberto.isDavidSettled).toBe(false);
     expect(aberto.isFamiliaSettled).toBe(false);
+    expect(aberto.isLimpezaSettled).toBe(false);
 
     const fechadoDavid = serializeRentalWithComputed({ ...base, davidSettlementId: "set-1" });
     expect(fechadoDavid.isDavidSettled).toBe(true);
     expect(fechadoDavid.isFamiliaSettled).toBe(false);
+    expect(fechadoDavid.isLimpezaSettled).toBe(false);
 
-    const fechadoAmbos = serializeRentalWithComputed({
+    const fechadoTodos = serializeRentalWithComputed({
       ...base,
       davidSettlementId: "set-1",
       familiaSettlementId: "set-2",
+      limpezaSettlementId: "set-3",
     });
-    expect(fechadoAmbos.isDavidSettled).toBe(true);
-    expect(fechadoAmbos.isFamiliaSettled).toBe(true);
+    expect(fechadoTodos.isDavidSettled).toBe(true);
+    expect(fechadoTodos.isFamiliaSettled).toBe(true);
+    expect(fechadoTodos.isLimpezaSettled).toBe(true);
+  });
+
+  it("as três trilhas são independentes: limpeza fechada não fecha as outras", () => {
+    const soLimpeza = serializeRentalWithComputed({ ...base, limpezaSettlementId: "set-3" });
+    expect(soLimpeza.isLimpezaSettled).toBe(true);
+    expect(soLimpeza.isDavidSettled).toBe(false);
+    expect(soLimpeza.isFamiliaSettled).toBe(false);
   });
 
   it("preserva os campos simples do registro", () => {

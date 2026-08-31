@@ -42,7 +42,10 @@ export default function ConfirmDialog({
         <h2 id="confirm-dialog-title" className="text-base font-semibold text-slate-900 dark:text-slate-100">
           {title}
         </h2>
-        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{message}</p>
+        {/* whitespace-pre-line: alguns chamadores montam a mensagem em vários
+            parágrafos (ex: mover transação para a família, que precisa listar o
+            que se perde). Para mensagem de uma linha só não muda nada. */}
+        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 whitespace-pre-line">{message}</p>
         <div className="mt-5 flex justify-end gap-2">
           <button
             type="button"

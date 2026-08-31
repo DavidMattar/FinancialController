@@ -19,6 +19,9 @@ next-env.d.ts
 # Relatorio de cobertura de testes (gerado por `npm run test:coverage`)
 /coverage/
 
+# Cache incremental do TypeScript (recriado por `npx tsc`)
+tsconfig.tsbuildinfo
+
 # Logs
 npm-debug.log*
 yarn-debug.log*
