@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
 import { sanitizeNightRateOverrides, suggestCleaningFee } from "@/lib/rentalPriceTable";
@@ -7,12 +8,12 @@ import { sanitizeNightRateOverrides, suggestCleaningFee } from "@/lib/rentalPric
 const previewSchema = z.object({
   checkIn: z.string(),
   checkOut: z.string(),
-  netAmountReceived: z.number().nonnegative(),
-  cleaningFee: z.number().nonnegative().default(0),
-  extrasTotal: z.number().nonnegative().default(0),
+  netAmountReceived: decimalField(z.number().nonnegative()),
+  cleaningFee: decimalField(z.number().nonnegative().default(0)),
+  extrasTotal: decimalField(z.number().nonnegative().default(0)),
   // Diárias customizadas deste aluguel: { "YYYY-MM-DD": valor }. Opcional —
   // sem elas o preview usa a tabela de preços normal para todas as noites.
-  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
+  nightRateOverrides: z.record(z.string(), decimalField(z.number().nonnegative())).nullish(),
 });
 
 /**

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
@@ -8,22 +9,22 @@ import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/season
 
 const expenseSchema = z.object({
   description: z.string().min(1),
-  amount: z.number().positive(),
+  amount: decimalField(z.number().positive()),
 });
 
 const updateSchema = z.object({
   platform: z.enum(["AIRBNB", "BOOKING"]),
   checkIn: z.string(),
   checkOut: z.string(),
-  netAmountReceived: z.number().nonnegative(),
-  cleaningFee: z.number().nonnegative().default(0),
+  netAmountReceived: decimalField(z.number().nonnegative()),
+  cleaningFee: decimalField(z.number().nonnegative().default(0)),
   notes: z.string().nullable().optional(),
   expenses: z.array(expenseSchema).default([]),
   // Diárias customizadas SÓ deste aluguel: { "YYYY-MM-DD": valor }. Como a
   // lista de gastos extras, é substituída por completo a cada edição — o
   // formulário sempre envia o mapa inteiro, e um mapa vazio significa
   // "voltar a usar a tabela de preços em todas as noites".
-  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
+  nightRateOverrides: z.record(z.string(), decimalField(z.number().nonnegative())).nullish(),
 });
 
 /**

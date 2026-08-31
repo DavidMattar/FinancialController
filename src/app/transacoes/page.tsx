@@ -13,6 +13,8 @@ import DateRangePicker from "@/components/DateRangePicker";
 import TransactionsTable from "@/components/TransactionsTable";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
 import type { Category, Transaction } from "@/lib/types";
+import { parseDecimalInput } from "@/lib/decimalInput";
+import ParsedValueHint from "@/components/ParsedValueHint";
 
 export default function TransacoesPage() {
   const [range, setRange] = useState<DateRange>(currentMonthRange());
@@ -224,6 +226,9 @@ function ManualTransactionForm({
   const [pendingReturn, setPendingReturn] = useState(false);
   const [type, setType] = useState<"EXPENSE" | "INCOME" | "PAYMENT">("EXPENSE");
   const [submitting, setSubmitting] = useState(false);
+  // Valor digitado que não descreve um número: avisa na tela em vez de enviar
+  // NaN (que o JSON.stringify vira null) e tomar um 400 que a tela não mostrava.
+  const [amountError, setAmountError] = useState(false);
 
   const selectedCategory = categories.find((c) => c.id === categoryId);
   // Se a categoria escolhida for do tipo receita, o campo "Tipo" fica travado/desabilitado.
@@ -236,9 +241,19 @@ function ManualTransactionForm({
     if (category?.kind === "INCOME") setType("INCOME");
   }
 
-  /** Envia a nova transação para a API; o valor digitado com vírgula (formato BR) é convertido para ponto antes de virar número. */
+  /**
+   * Envia a nova transação para a API. O valor passa por `parseDecimalInput`
+   * (`src/lib/decimalInput.ts`), que aceita vírgula ou ponto como separador
+   * decimal e também entende separador de milhar ("1.234,56").
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const parsedAmount = parseDecimalInput(amount);
+    if (parsedAmount === null) {
+      setAmountError(true);
+      return;
+    }
+    setAmountError(false);
     setSubmitting(true);
     try {
       await fetch("/api/transactions", {
@@ -247,7 +262,7 @@ function ManualTransactionForm({
         body: JSON.stringify({
           date,
           description,
-          amount: Number(amount.replace(",", ".")),
+          amount: parsedAmount,
           type,
           categoryId: categoryId || null,
           pendingReturn,
@@ -291,6 +306,14 @@ function ManualTransactionForm({
           onChange={(e) => setAmount(e.target.value)}
           className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
         />
+        {/* Eco do valor interpretado: resolve a ambiguidade de "1.000"
+            mostrando o que o sistema entendeu, em vez de adivinhar. */}
+        <ParsedValueHint raw={amount} kind="money" />
+        {amountError && (
+          <p className="text-xs text-red-600 dark:text-red-400">
+            Valor inválido — use vírgula ou ponto (ex: 3,07).
+          </p>
+        )}
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-xs text-slate-500 dark:text-slate-400">Tipo</label>

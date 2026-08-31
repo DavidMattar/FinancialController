@@ -31,6 +31,12 @@
  * - **Valores `Decimal` viajam como string** (é assim que o `JSON.stringify`
  *   serializa o Decimal do Prisma) e voltam ao Prisma como string também, para
  *   não perder precisão passando por `number`.
+ * - **Formato 2 (compras de investimento).** Até o formato 1, um
+ *   `InvestmentHolding` carregava `quantity`/`avgCostBrl` como colunas. Agora
+ *   quem guarda isso é `InvestmentPurchase` (uma linha por compra), e o total
+ *   da posição é derivado delas. Um arquivo do formato 1 continua restaurável:
+ *   os dois campos antigos ainda são aceitos no schema e viram UMA compra
+ *   equivalente na restauração (ver `legacyPurchasesFromHoldings`).
  */
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
@@ -41,7 +47,7 @@ import { Prisma } from "@/generated/prisma/client";
  * incompatível, incremente aqui — a restauração recusa arquivos com versão
  * MAIOR que esta (arquivo gerado por uma versão mais nova do app).
  */
-export const BACKUP_FORMAT_VERSION = 1;
+export const BACKUP_FORMAT_VERSION = 2;
 
 /** Marca gravada no arquivo, só para deixar claro de qual app ele veio. */
 export const BACKUP_APP_NAME = "FinancialController";
@@ -137,9 +143,26 @@ const investmentHoldingSchema = z.object({
   type: z.enum(["CRYPTO", "CURRENCY"]),
   symbol: z.string(),
   name: z.string(),
-  quantity: decimalValue,
-  avgCostBrl: decimalValue,
   notes: z.string().nullish(),
+  createdAt: isoDateTime,
+  updatedAt: isoDateTime,
+  /**
+   * LEGADO do formato 1, quando a posição guardava o total e o custo médio em
+   * colunas próprias. Hoje isso vive em `investmentPurchases`; os dois campos
+   * continuam aceitos aqui (opcionais) só para um arquivo antigo não perder a
+   * posição na restauração — `legacyPurchasesFromHoldings` os converte em uma
+   * compra equivalente. Backup gerado a partir do formato 2 não os traz.
+   */
+  quantity: nullableDecimalValue,
+  avgCostBrl: nullableDecimalValue,
+});
+
+/** Uma compra individual de um ativo (ver model InvestmentPurchase). */
+const investmentPurchaseSchema = z.object({
+  id: idValue,
+  holdingId: idValue,
+  quantity: decimalValue,
+  unitCostBrl: decimalValue,
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
 });
@@ -221,6 +244,7 @@ const backupDataSchema = z.object({
   transactions: z.array(transactionSchema).default([]),
   transactionItems: z.array(transactionItemSchema).default([]),
   investmentHoldings: z.array(investmentHoldingSchema).default([]),
+  investmentPurchases: z.array(investmentPurchaseSchema).default([]),
   dashboardViews: z.array(dashboardViewSchema).default([]),
   familyTransactions: z.array(familyTransactionSchema).default([]),
   rentalSettlements: z.array(rentalSettlementSchema).default([]),
@@ -253,6 +277,7 @@ export const BACKUP_TABLE_KEYS = [
   "transactions",
   "transactionItems",
   "investmentHoldings",
+  "investmentPurchases",
   "dashboardViews",
   "familyTransactions",
   "rentalSettlements",
@@ -268,6 +293,7 @@ export const BACKUP_TABLE_LABEL: Record<keyof BackupData, string> = {
   transactions: "Transações",
   transactionItems: "Sub-itens de transação",
   investmentHoldings: "Investimentos",
+  investmentPurchases: "Compras de investimento",
   dashboardViews: "Views salvas",
   familyTransactions: "Transações Família",
   rentalSettlements: "Repasses de aluguel",
@@ -305,6 +331,7 @@ export async function collectBackup(): Promise<BackupFile> {
     transactions,
     transactionItems,
     investmentHoldings,
+    investmentPurchases,
     dashboardViews,
     familyTransactions,
     rentalSettlements,
@@ -317,6 +344,7 @@ export async function collectBackup(): Promise<BackupFile> {
     prisma.transaction.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.transactionItem.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.investmentHolding.findMany({ orderBy: { createdAt: "asc" } }),
+    prisma.investmentPurchase.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.dashboardView.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.familyTransaction.findMany({ orderBy: { createdAt: "asc" } }),
     prisma.rentalSettlement.findMany({ orderBy: { createdAt: "asc" } }),
@@ -333,6 +361,7 @@ export async function collectBackup(): Promise<BackupFile> {
     transactions,
     transactionItems,
     investmentHoldings,
+    investmentPurchases,
     dashboardViews,
     familyTransactions,
     rentalSettlements,
@@ -411,8 +440,44 @@ async function wipeAll(tx: Prisma.TransactionClient): Promise<void> {
   await tx.seasonalRental.deleteMany();
   await tx.rentalSettlement.deleteMany();
   await tx.familyTransaction.deleteMany();
+  await tx.investmentPurchase.deleteMany();
   await tx.investmentHolding.deleteMany();
   await tx.dashboardView.deleteMany();
+}
+
+/**
+ * Converte as posições de um backup do **formato 1** em compras.
+ *
+ * No formato 1 a posição guardava `quantity` e `avgCostBrl` em colunas
+ * próprias e a compra individual não existia. Restaurar um arquivo desses sem
+ * converter deixaria a posição com zero compras — e, como o total agora é a
+ * soma delas, ela apareceria zerada na tela: perda de dado silenciosa.
+ *
+ * A conversão gera UMA compra por posição, com a quantidade total ao custo
+ * médio que estava salvo. Não é a mesma informação que teria sido gravada na
+ * época (os aportes individuais não existem mais em lugar nenhum), mas é
+ * exatamente equivalente em total investido, custo médio e resultado.
+ *
+ * O id da compra é **derivado do id da posição** (`<holdingId>-legacy`), e não
+ * um cuid novo: assim restaurar o mesmo arquivo duas vezes não cria uma
+ * segunda compra (o `skipDuplicates` reconhece o id repetido), mantendo a
+ * restauração idempotente como no resto deste módulo.
+ *
+ * Uma posição que já venha com compras no arquivo (formato 2) é ignorada aqui,
+ * mesmo que ainda carregue os campos antigos — o dado real ganha do legado.
+ */
+function legacyPurchasesFromHoldings(data: BackupData) {
+  const holdingsComCompra = new Set(data.investmentPurchases.map((p) => p.holdingId));
+  return data.investmentHoldings
+    .filter((h) => h.quantity != null && h.avgCostBrl != null && !holdingsComCompra.has(h.id))
+    .map((h) => ({
+      id: `${h.id}-legacy`,
+      holdingId: h.id,
+      quantity: h.quantity as string,
+      unitCostBrl: h.avgCostBrl as string,
+      createdAt: h.createdAt,
+      updatedAt: h.updatedAt,
+    }));
 }
 
 /**
@@ -526,11 +591,25 @@ async function insertBackup(
         type: h.type,
         symbol: h.symbol,
         name: h.name,
-        quantity: h.quantity,
-        avgCostBrl: h.avgCostBrl,
         notes: h.notes ?? null,
         createdAt: toDate(h.createdAt),
         updatedAt: toDate(h.updatedAt),
+      })),
+      skipDuplicates: true,
+    })
+  ).count;
+
+  // As compras do arquivo, mais as convertidas de um arquivo do formato 1 (que
+  // guardava total e custo médio na própria posição).
+  inserted.investmentPurchases = (
+    await tx.investmentPurchase.createMany({
+      data: [...data.investmentPurchases, ...legacyPurchasesFromHoldings(data)].map((p) => ({
+        id: p.id,
+        holdingId: p.holdingId,
+        quantity: p.quantity,
+        unitCostBrl: p.unitCostBrl,
+        createdAt: toDate(p.createdAt),
+        updatedAt: toDate(p.updatedAt),
       })),
       skipDuplicates: true,
     })

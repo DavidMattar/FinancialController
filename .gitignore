@@ -22,6 +22,11 @@ next-env.d.ts
 # Cache incremental do TypeScript (recriado por `npx tsc`)
 tsconfig.tsbuildinfo
 
+# Logs de execução do app (uma pasta por dia, um arquivo por aba).
+# A pasta é criada automaticamente pela rota /api/logs; é dado de execução
+# desta máquina, não código.
+/logs/
+
 # Logs
 npm-debug.log*
 yarn-debug.log*

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -11,7 +12,7 @@ import { prisma } from "@/lib/prisma";
  */
 const createSchema = z.object({
   description: z.string().min(1),
-  amount: z.number().positive(),
+  amount: decimalField(z.number().positive()),
 });
 
 /**

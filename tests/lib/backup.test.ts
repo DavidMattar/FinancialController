@@ -24,6 +24,7 @@ const MODEL_POR_TABELA: Record<keyof BackupData, string> = {
   transactions: "transaction",
   transactionItems: "transactionItem",
   investmentHoldings: "investmentHolding",
+  investmentPurchases: "investmentPurchase",
   dashboardViews: "dashboardView",
   familyTransactions: "familyTransaction",
   rentalSettlements: "rentalSettlement",
@@ -99,9 +100,15 @@ const registros = {
     type: "CRYPTO",
     symbol: "BTC",
     name: "Bitcoin",
-    quantity: "0.12345678",
-    avgCostBrl: "1234.56",
     notes: null,
+    createdAt: ISO,
+    updatedAt: ISO,
+  },
+  investmentPurchases: {
+    id: "buy-1",
+    holdingId: "hold-1",
+    quantity: "0.12345678",
+    unitCostBrl: "1234.560000000000",
     createdAt: ISO,
     updatedAt: ISO,
   },
@@ -196,7 +203,9 @@ beforeEach(() => {
 
 describe("metadados do formato", () => {
   it("a versão do formato é um inteiro positivo", () => {
-    expect(BACKUP_FORMAT_VERSION).toBe(1);
+    // 2 = formato com InvestmentPurchase (a compra individual de investimento).
+    // O formato 1 continua restaurável, ver o describe do formato 1 mais abaixo.
+    expect(BACKUP_FORMAT_VERSION).toBe(2);
   });
 
   it("toda tabela do backup tem um rótulo em português", () => {
@@ -205,8 +214,8 @@ describe("metadados do formato", () => {
     }
   });
 
-  it("cobre as 11 tabelas do schema", () => {
-    expect(BACKUP_TABLE_KEYS).toHaveLength(11);
+  it("cobre as 12 tabelas do schema", () => {
+    expect(BACKUP_TABLE_KEYS).toHaveLength(12);
   });
 
   it("categorias vêm antes de transações, e repasses antes de aluguéis (ordem de FK)", () => {
@@ -459,7 +468,7 @@ describe("restoreBackup — modo replace", () => {
     const r = await restoreBackup(backupFileSchema.parse(arquivo()), "replace");
 
     expect(r.mode).toBe("replace");
-    expect(r.totalInserted).toBe(11);
+    expect(r.totalInserted).toBe(12);
     expect(r.inserted.categories).toBe(1);
     expect(r.fileCounts.categories).toBe(1);
   });
@@ -500,7 +509,7 @@ describe("restoreBackup — modo merge", () => {
   it("insere as mesmas tabelas do replace", async () => {
     const r = await restoreBackup(backupFileSchema.parse(arquivo()), "merge");
     expect(r.mode).toBe("merge");
-    expect(r.totalInserted).toBe(11);
+    expect(r.totalInserted).toBe(12);
   });
 
   it("reporta zero inserido quando o banco já tem tudo (skipDuplicates)", async () => {
@@ -551,9 +560,9 @@ describe("restoreBackup — conversão dos valores", () => {
   });
 
   it("mantém valores monetários como string (não passa por float)", async () => {
-    const args = await inserirEObter("investmentHolding");
+    const args = await inserirEObter("investmentPurchase");
     expect(args.data[0].quantity).toBe("0.12345678");
-    expect(args.data[0].avgCostBrl).toBe("1234.56");
+    expect(args.data[0].unitCostBrl).toBe("1234.560000000000");
   });
 
   it("converte data opcional nula para null e preenchida para Date", async () => {
@@ -816,6 +825,113 @@ describe("restoreBackup — campos opcionais", () => {
     expect(fatura.closingDate).toBeInstanceOf(Date);
     expect(fatura.minPayment).toBe("100.00");
     expect(fatura.previousBalance).toBe("50.00");
+  });
+});
+
+describe("restoreBackup — arquivo do formato 1 (sem compras de investimento)", () => {
+  // No formato 1 a posição guardava `quantity`/`avgCostBrl` em colunas próprias
+  // e a compra individual não existia. Restaurar sem converter deixaria a
+  // posição com zero compras — e, como o total agora é a soma delas, ela
+  // apareceria zerada: perda de dado silenciosa.
+
+  /** Um arquivo do formato 1: holding com os campos antigos, sem investmentPurchases. */
+  function arquivoFormato1(over: Record<string, unknown> = {}) {
+    const data = dataVazia();
+    data.investmentHoldings = [
+      {
+        id: "hold-1",
+        type: "CRYPTO",
+        symbol: "BTC",
+        name: "Bitcoin",
+        notes: "4K",
+        quantity: "0.04951677",
+        avgCostBrl: "84088.36",
+        createdAt: ISO,
+        updatedAt: ISO,
+        ...over,
+      },
+    ];
+    return { formatVersion: 1, app: BACKUP_APP_NAME, generatedAt: ISO, data };
+  }
+
+  it("é aceito pelo schema mesmo trazendo os campos que saíram do model", () => {
+    expect(backupFileSchema.safeParse(arquivoFormato1()).success).toBe(true);
+  });
+
+  it("converte a posição antiga em uma compra equivalente", async () => {
+    await restoreBackup(backupFileSchema.parse(arquivoFormato1()), "replace");
+
+    const compras = prisma.investmentPurchase.createMany.mock.calls[0][0].data;
+    expect(compras).toHaveLength(1);
+    expect(compras[0]).toMatchObject({
+      holdingId: "hold-1",
+      quantity: "0.04951677",
+      unitCostBrl: "84088.36",
+    });
+  });
+
+  it("o id da compra convertida é derivado do id da posição (restauração idempotente)", async () => {
+    // Um cuid novo a cada restauração criaria uma segunda compra ao aplicar o
+    // mesmo arquivo duas vezes, dobrando a posição.
+    await restoreBackup(backupFileSchema.parse(arquivoFormato1()), "merge");
+
+    expect(prisma.investmentPurchase.createMany.mock.calls[0][0].data[0].id).toBe("hold-1-legacy");
+  });
+
+  it("a compra convertida herda as datas da posição", async () => {
+    await restoreBackup(backupFileSchema.parse(arquivoFormato1()), "merge");
+
+    const compra = prisma.investmentPurchase.createMany.mock.calls[0][0].data[0];
+    expect(compra.createdAt).toBeInstanceOf(Date);
+    expect(compra.createdAt.toISOString()).toBe(ISO);
+  });
+
+  it("a posição em si entra sem os campos antigos", async () => {
+    await restoreBackup(backupFileSchema.parse(arquivoFormato1()), "merge");
+
+    const holding = prisma.investmentHolding.createMany.mock.calls[0][0].data[0];
+    expect(holding).not.toHaveProperty("quantity");
+    expect(holding).not.toHaveProperty("avgCostBrl");
+    expect(holding.notes).toBe("4K");
+  });
+
+  it("não converte uma posição que já tem compra no arquivo (o dado real ganha do legado)", async () => {
+    const arquivoMisto = arquivoFormato1();
+    arquivoMisto.data.investmentPurchases = [
+      {
+        id: "buy-real",
+        holdingId: "hold-1",
+        quantity: "1",
+        unitCostBrl: "10",
+        createdAt: ISO,
+        updatedAt: ISO,
+      },
+    ];
+
+    await restoreBackup(backupFileSchema.parse(arquivoMisto), "merge");
+
+    const compras = prisma.investmentPurchase.createMany.mock.calls[0][0].data;
+    expect(compras).toHaveLength(1);
+    expect(compras[0].id).toBe("buy-real");
+  });
+
+  it("posição sem os campos antigos e sem compra não gera nada", async () => {
+    // Não há de onde inventar uma compra; melhor não gravar do que gravar zero.
+    const semNada = arquivoFormato1({ quantity: undefined, avgCostBrl: undefined });
+
+    await restoreBackup(backupFileSchema.parse(semNada), "merge");
+
+    expect(prisma.investmentPurchase.createMany.mock.calls[0][0].data).toEqual([]);
+  });
+
+  it("apaga as compras antes das posições no modo replace", async () => {
+    // Filho antes de pai, senão a chave estrangeira é violada no meio.
+    await restoreBackup(backupFileSchema.parse(arquivoFormato1()), "replace");
+
+    const ordem = prisma.$transaction.mock.calls.length;
+    expect(ordem).toBe(1);
+    expect(prisma.investmentPurchase.deleteMany).toHaveBeenCalled();
+    expect(prisma.investmentHolding.deleteMany).toHaveBeenCalled();
   });
 });
 

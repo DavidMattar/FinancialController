@@ -350,6 +350,62 @@ describe("SeasonalRentalModal — gastos extras", () => {
   });
 });
 
+describe("SeasonalRentalModal — valores com vírgula ou ponto", () => {
+  it("aceita o valor recebido com separador de milhar", async () => {
+    // "1.234,56" virava NaN no `Number()` de antes e ia para a API só para
+    // tomar um 400 (ver src/lib/decimalInput.ts).
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.change(campoPorRotulo(/Valor líquido recebido/), {
+      target: { value: "1.234,56" },
+    });
+    fireEvent.submit(document.querySelector("form")!);
+
+    await waitFor(() => expect(corpoSalvo().netAmountReceived).toBe(1234.56));
+  });
+
+  it("avisa e não salva quando o valor recebido não é um número", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.change(campoPorRotulo(/Valor líquido recebido/), { target: { value: "abc" } });
+    fireEvent.submit(document.querySelector("form")!);
+
+    expect(screen.getByText(/Valor recebido inválido/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === "POST" && c[0] === "/api/seasonal-rentals")).toHaveLength(0);
+  });
+
+  it("avisa e não salva quando um gasto extra não é um número", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    await preencherEEsperarPreview();
+
+    fireEvent.click(screen.getByRole("button", { name: "+ adicionar gasto" }));
+    fireEvent.change(screen.getByPlaceholderText(/ex: gás/), { target: { value: "Gás" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "abc" } });
+    fireEvent.submit(document.querySelector("form")!);
+
+    expect(screen.getByText(/Gasto extra com valor inválido/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === "POST" && c[0] === "/api/seasonal-rentals")).toHaveLength(0);
+  });
+
+  it("não pede preview enquanto o valor recebido não for um número", async () => {
+    comRespostas();
+    render(<SeasonalRentalModal {...props} />);
+    const [checkIn, checkOut] = document.querySelectorAll('input[type="date"]');
+    fireEvent.change(checkIn, { target: { value: "2026-06-08" } });
+    fireEvent.change(checkOut, { target: { value: "2026-06-11" } });
+
+    fireEvent.change(campoPorRotulo(/Valor líquido recebido/), { target: { value: "abc" } });
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("SeasonalRentalModal — diárias customizadas", () => {
   async function abrirListaDeDiarias() {
     render(<SeasonalRentalModal {...props} />);

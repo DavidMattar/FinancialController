@@ -19,11 +19,20 @@ sem backend em nuvem, um único usuário), com as seguintes áreas:
   Temporada" (Airbnb/Booking) com cálculo de repasse.
 - Categorias (`/categorias`) — CRUD de categorias.
 - Investimentos (`/investimentos`) — cripto/moeda com cotação ao vivo.
+  Cada ativo mostra a posição fechada e **expande** ao clicar no símbolo,
+  listando o resultado de cada compra individual.
 - Relatórios (`/relatorios`) — gráficos e regra de orçamento 15/10/75, e
   no fim da página um bloco separado de **backup/restauração** de todos
   os dados em JSON (ver seção 8).
 - Importar fatura (`/importar-fatura`) — importação de fatura de cartão
   (PDF) e de nota fiscal/NFC-e (PDF ou texto colado).
+
+Duas coisas valem para TODAS as telas:
+
+- **Todo erro aparece num pop-up** explicando o que aconteceu e por quê
+  (não existe mais "clico e nada acontece, sem mensagem").
+- **Toda movimentação é registrada em arquivo**, na pasta `logs/` criada
+  automaticamente na raiz do projeto — ver seção 9.
 
 ## 2. Stack técnica
 
@@ -126,6 +135,24 @@ esse comando.
 > página, ou
 > `curl http://localhost:3000/api/backup/export -o backup.json`.
 > Ver seção 8.
+
+**Se o `db push` for remover coluna, o Prisma exige `--accept-data-loss`** —
+e, quando detecta que foi invocado por um agente de IA, **recusa o comando** e
+manda informar o usuário e pedir consentimento explícito. Isso não é bug: é o
+comportamento correto num repositório cujo único banco tem dado real (armadilha
+9). Só depois da autorização o Prisma aceita a variável
+`PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` com o texto dessa autorização.
+
+O roteiro que funcionou na prática (migração das colunas de investimento para a
+tabela `InvestmentPurchase`, em 2026-08-31):
+
+1. Exportar backup por `/api/backup/export`.
+2. Pedir a autorização ao usuário e rodar o `db push`.
+3. **Matar o `next dev` de verdade** — parar só o wrapper do `npm` deixa o
+   processo filho vivo, segurando a porta 3000 com o Prisma Client antigo em
+   memória (armadilha 1). Confira com o comando PowerShell da seção 4.6.
+4. Reaplicar o backup em modo `merge`, que recupera o dado pela conversão de
+   formato antigo (seção 8).
 
 ### 4.5. Popular categorias padrão (seed)
 
@@ -327,6 +354,21 @@ mostrar preço atual.
   especificava essas datas. Existe uma saída manual: no modal de editar
   o aluguel, a lista "Valores das diárias" permite ajustar a diária
   daquela noite específica só naquele aluguel (ver armadilha 8).
+- **`1.000` é lido como 1, não como mil.** Os campos de valor aceitam
+  vírgula OU ponto como separador decimal ("3,07" e "3.07" são o mesmo
+  número), e um separador sozinho é sempre decimal. A regra alternativa (três
+  casas depois do ponto = milhar) quebraria uma quantidade de cripto legítima
+  como "1.500" ETH, então não existe regra que acerte os dois casos. A saída
+  não é adivinhar: **cada campo ecoa embaixo o valor que o sistema entendeu**
+  (`= R$ 1,00`), e o usuário corrige antes de salvar. Para mil, escreva
+  `1.000,00`. A varredura completa de formatos está em
+  `tests/lib/decimalInput.test.ts`, numa tabela de 55 casos.
+- Precisão de ponto flutuante: um valor com mais de ~17 dígitos
+  significativos perde as casas finais (`10,0000000000000000000000000001` vira
+  10), e um valor absurdamente grande (`1e21`) passa pela validação mas
+  estoura o `Decimal(20, 8)` do banco, virando erro 500. Nenhum dos dois
+  aparece em uso real; se um dia aparecer, o lugar de tratar é um `.max()` no
+  schema zod da rota.
 - Não há autenticação/login — o app assume um único usuário local.
 
 ## 8. Backup e restauração dos dados (sem passar pelo banco)
@@ -361,9 +403,57 @@ O que é bom saber antes de confiar nisso:
 - Detalhes de formato e das decisões de design: `src/lib/backup.ts` e a
   seção 4.8 do `contexto.md`.
 
-## 9. Rodar os testes
+## 9. Logs de execução (pasta `logs/`)
 
-O projeto tem uma suíte de **1242 testes** (Vitest + Testing Library)
+A pasta é **criada automaticamente** na raiz do projeto na primeira
+movimentação — não precisa criar nada à mão, e ela está no `.gitignore`
+(é dado de execução desta máquina, não código).
+
+```
+logs/
+  2026-08-31/
+    dashboard.log      ← uma linha por movimentação daquela aba
+    transacoes.log
+    investimentos.log
+    outras-rotas.log   ← rota que não é uma das abas conhecidas
+    erros.log          ← o log PARALELO: só erros, de todas as abas
+  2026-09-01/
+    ...
+```
+
+Uma linha real:
+
+```
+2026-08-31 13:20:45.781-03:00 | ERRO  | erro | transacoes | criou transação — Dados recusados pelo servidor | POST /api/transactions · HTTP 400
+```
+
+O que saber para usar (o "por quê" de cada decisão está na seção 4.10 do
+`contexto.md`):
+
+- **Um erro é gravado nos DOIS arquivos**: no da aba (para a cronologia ficar
+  completa) e no `erros.log` (para "houve erro hoje?" ser respondido abrindo
+  um arquivo só). Nenhum dos dois, lido isolado, esconde um erro.
+- **A pasta do dia usa a data LOCAL**, e o horário de cada linha também, com o
+  deslocamento escrito (`-03:00`).
+- **Leitura bem-sucedida não é registrada.** O dashboard e a tela de
+  investimentos consultam a API a cada 30s; registrar isso soterraria as
+  mudanças de verdade. Leitura que FALHA é erro, e é registrada.
+- Nada precisa ser instrumentado à mão: o registro sai de um invólucro do
+  `fetch` global instalado no layout raiz, então chamada de API nova já nasce
+  registrada.
+- Se a gravação do log falhar (disco cheio, permissão), a rota responde 500 e o
+  navegador registra no `console.error` — de propósito **não** abre pop-up, que
+  geraria um novo evento de log e um laço infinito.
+
+Para limpar (ou arquivar) os logs, apague a pasta: ela é recriada sozinha.
+
+```powershell
+Remove-Item -Recurse -Force .\logs
+```
+
+## 10. Rodar os testes
+
+O projeto tem uma suíte de **1634 testes** (Vitest + Testing Library)
 cobrindo **100% de `src/`**. Ela não depende de banco nem de internet —
 `src/lib/prisma` e o `fetch` são substituídos por dublês —, então dá para
 rodar antes mesmo de configurar o PostgreSQL:
@@ -380,10 +470,10 @@ cair**. Ao adicionar código, adicione teste junto.
 
 Detalhes de organização, decisões de configuração (por que duas
 "projects", por que o fuso é fixado, por que `sequence.hooks: "list"`) e as
-armadilhas de teste já mapeadas estão na **seção 9 do `contexto.md`** —
+armadilhas de teste já mapeadas estão na **seção 8 do `contexto.md`** —
 leia antes de escrever teste novo, especialmente se for de componente.
 
-## 10. Comandos úteis (resumo rápido)
+## 11. Comandos úteis (resumo rápido)
 
 ```bash
 npm install              # instala dependências
@@ -398,4 +488,7 @@ npx tsc --noEmit           # checagem de tipos sem gerar arquivos
 
 # backup de todos os dados em JSON (com o servidor rodando) — ver seção 8
 curl http://localhost:3000/api/backup/export -o backup.json
+
+# ver os erros registrados hoje (ver seção 9)
+Get-Content .\logs\$(Get-Date -Format 'yyyy-MM-dd')\erros.log -Tail 20
 ```

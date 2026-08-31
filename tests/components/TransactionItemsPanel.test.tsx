@@ -191,6 +191,18 @@ describe("TransactionItemsPanel — adicionar item", () => {
     expect(screen.getByPlaceholderText("0,00")).toHaveValue("");
   });
 
+  it("avisa e não envia quando o valor não é um número", async () => {
+    comItens([]);
+    render(<TransactionItemsPanel {...props} />);
+
+    fireEvent.change(screen.getByPlaceholderText("ex: tomate"), { target: { value: "X" } });
+    fireEvent.change(screen.getByPlaceholderText("0,00"), { target: { value: "abc" } });
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar" }));
+
+    expect(screen.getByText("Use vírgula ou ponto.")).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === "POST")).toHaveLength(0);
+  });
+
   it("aceita ponto decimal também", async () => {
     comItens([]);
     render(<TransactionItemsPanel {...props} />);

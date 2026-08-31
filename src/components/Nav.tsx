@@ -6,18 +6,12 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import ThemeToggle from "./ThemeToggle";
+import { APP_TABS } from "@/lib/appTabs";
 
-// Lista de todas as páginas do app que aparecem na barra de navegação.
-const LINKS = [
-  { href: "/", label: "Dashboard" },
-  { href: "/transacoes", label: "Transações" },
-  { href: "/transacoes-familia", label: "Transações Família" },
-  { href: "/receitas", label: "Receitas" },
-  { href: "/importar-fatura", label: "Importar Fatura" },
-  { href: "/categorias", label: "Categorias" },
-  { href: "/investimentos", label: "Investimentos" },
-  { href: "/relatorios", label: "Relatórios" },
-];
+// A lista de abas vive em src/lib/appTabs.ts, e não aqui, porque o nome de cada
+// aba também nomeia o arquivo de log dela (logs/AAAA-MM-DD/<slug>.log). Duas
+// listas paralelas divergiriam na primeira aba nova.
+const LINKS = APP_TABS;
 
 export default function Nav() {
   // Rota atual, usada para destacar (highlight) o link da página em que o usuário está.

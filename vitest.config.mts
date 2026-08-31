@@ -69,7 +69,10 @@ export default defineConfig({
         test: {
           name: "dom",
           environment: "jsdom",
-          include: ["tests/{components,pages,hooks}/**/*.test.{ts,tsx}"],
+          // `client` guarda o runtime de navegador que nao e componente
+          // (a interceptacao de fetch e os handlers globais de erro): e codigo
+          // de lib, mas precisa de `window`, logo roda aqui e nao no projeto node.
+          include: ["tests/{components,pages,hooks,client}/**/*.test.{ts,tsx}"],
           setupFiles: ["tests/setup.dom.ts"],
         },
       },

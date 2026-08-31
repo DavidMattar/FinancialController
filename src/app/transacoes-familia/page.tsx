@@ -12,6 +12,8 @@ import DateRangePicker from "@/components/DateRangePicker";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
 import { formatBRL, formatDate } from "@/lib/format";
+import { parseDecimalInput } from "@/lib/decimalInput";
+import ParsedValueHint from "@/components/ParsedValueHint";
 import type { FamilyTransaction } from "@/lib/types";
 
 export default function TransacoesFamiliaPage() {
@@ -180,10 +182,22 @@ function FamilyTransactionForm({ onCreated }: { onCreated: () => void }) {
   const [amount, setAmount] = useState("");
   const [type, setType] = useState<"EXPENSE" | "INCOME">("EXPENSE");
   const [submitting, setSubmitting] = useState(false);
+  // Mesma regra do ledger principal: valor ilegível avisa na tela, não vira 400 silencioso.
+  const [amountError, setAmountError] = useState(false);
 
-  /** Envia a nova transação da família para a API; valor com vírgula (formato BR) é convertido para ponto. */
+  /**
+   * Envia a nova transação da família para a API. O valor passa por
+   * `parseDecimalInput`, que aceita vírgula ou ponto como separador decimal
+   * (ver `src/lib/decimalInput.ts`).
+   */
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const parsedAmount = parseDecimalInput(amount);
+    if (parsedAmount === null) {
+      setAmountError(true);
+      return;
+    }
+    setAmountError(false);
     setSubmitting(true);
     try {
       await fetch("/api/family-transactions", {
@@ -192,7 +206,7 @@ function FamilyTransactionForm({ onCreated }: { onCreated: () => void }) {
         body: JSON.stringify({
           date,
           description,
-          amount: Number(amount.replace(",", ".")),
+          amount: parsedAmount,
           type,
         }),
       });
@@ -237,6 +251,12 @@ function FamilyTransactionForm({ onCreated }: { onCreated: () => void }) {
           onChange={(e) => setAmount(e.target.value)}
           className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
         />
+        <ParsedValueHint raw={amount} kind="money" />
+        {amountError && (
+          <p className="text-xs text-red-600 dark:text-red-400">
+            Valor inválido — use vírgula ou ponto (ex: 3,07).
+          </p>
+        )}
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-xs text-slate-500 dark:text-slate-400">Tipo</label>

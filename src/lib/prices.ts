@@ -36,7 +36,15 @@ export interface CryptoPrice {
   brl: number;
   /** Preço em dólares americanos. */
   usd: number;
-  /** Variação percentual do preço em reais nas últimas 24h, se disponível. */
+  /**
+   * Variação percentual do preço em reais nas últimas 24h, se disponível.
+   *
+   * Faz parte da cotação que o CoinGecko devolve, mas hoje NENHUMA tela usa:
+   * a coluna de variação da página de investimentos passou a comparar a
+   * cotação atual com o custo médio pago (ver /api/investments/prices), que é
+   * o que diz como a posição está indo. Continua aqui porque descreve o
+   * payload da fonte externa, não a necessidade de uma tela específica.
+   */
   brl24hChange?: number;
 }
 

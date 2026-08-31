@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { ensureFixedSubItems } from "@/lib/transactionItems";
 import { parseLocalDate } from "@/lib/dateOnly";
@@ -7,7 +8,7 @@ import { parseLocalDate } from "@/lib/dateOnly";
 /** Um item de compra do supermercado (linha da nota), já revisado pelo usuário. */
 const itemSchema = z.object({
   description: z.string().min(1),
-  amount: z.number().positive(),
+  amount: decimalField(z.number().positive()),
 });
 
 /** Formato do corpo enviado pela tela de revisão da nota fiscal. */

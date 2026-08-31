@@ -31,7 +31,7 @@ arquivo deve responder.
 | `/investimentos` | `src/app/investimentos/page.tsx` | Holdings de cripto/moeda com cotação ao vivo. |
 | `/relatorios` | `src/app/relatorios/page.tsx` | Gráficos de tendência mensal + regra de orçamento 15/10/75. No fim da página, bloco separado de **backup/restauração** do banco inteiro (seção 4.8). |
 | `/importar-fatura` | `src/app/importar-fatura/page.tsx` | Duas abas: importar fatura de cartão (PDF) e nota fiscal/NFC-e (PDF ou texto colado). |
-| `src/app/layout.tsx` | — | Layout raiz: `Nav`, tema (dark/light), fontes. |
+| `src/app/layout.tsx` | — | Layout raiz: `Nav`, tema (dark/light), fontes, e o par `ErrorPopupProvider` + `ActivityLogger` que faz o pop-up de erro e o log de toda movimentação valerem em qualquer tela (seção 4.10). |
 
 ## 3. Modelos de dados (`prisma/schema.prisma`) e como se relacionam
 
@@ -44,7 +44,9 @@ CreditCard ─┤
 Invoice ────┼──> Transaction ──> TransactionItem
             │        (ledger principal, com categoria/cartão/fatura opcionais)
             
-InvestmentHolding        (independente, sem relação com Transaction)
+InvestmentHolding ──> InvestmentPurchase
+     (identidade do ativo)   (uma linha por compra; o total e o custo médio
+                              da posição são a SOMA delas, não colunas)
 DashboardView             (filtros salvos do dashboard, JSON livre)
 
 FamilyTransaction         (ISOLADO — sem relação com nada acima, de propósito)
@@ -266,12 +268,81 @@ SeasonalRental ──> SeasonalRentalExpense
   `TransactionItem` por produto incluído, reaproveitando o recurso de
   sub-itens visuais.
 
-### 4.7. Investimentos (`src/lib/prices.ts`)
+### 4.7. Investimentos (`src/lib/investments.ts`, `prices.ts`)
 - Cotação de cripto via **CoinGecko**, de moeda estrangeira via
   **open.er-api.com** — únicas chamadas externas do app, sem chave de
   API, sem dado do usuário saindo da máquina. Cache em memória de 30s.
-- Preço atual nunca é salvo no `InvestmentHolding` — é buscado ao vivo e
-  combinado com `quantity`/`avgCostBrl` na exibição.
+- Preço atual nunca é salvo — é buscado ao vivo e combinado com a posição na
+  exibição.
+- **A COMPRA individual é a única coisa gravada.** `InvestmentPurchase` tem
+  uma linha por aporte (quantidade + `unitCostBrl`, os reais pagos por UMA
+  unidade naquela compra). `InvestmentHolding` é só a identidade do ativo:
+  **não tem colunas de quantidade nem de custo médio**. Os dois são derivados
+  da soma das compras em `aggregatePurchases()` (`src/lib/investments.ts`),
+  na leitura, toda vez — mesma regra do `tableValue` de aluguel (seção 6).
+  - É isso que torna **impossível** a visão compactada divergir da expandida:
+    o total não é um número guardado em paralelo, é a soma daquelas linhas.
+  - O custo médio é **ponderado pela quantidade** (`cost / quantity`): 3
+    unidades a R$100 + 1 a R$200 dá R$125, não R$150.
+  - `unitCostBrl` é `Decimal(24, 12)` de propósito: 1 SHIB vale ~R$0,000026,
+    e com 2 casas (como era o `avgCostBrl` antigo) o preço arredondaria para
+    0,00 e o resultado da posição sairia errado.
+- **A tela mostra os dois níveis** (`/investimentos`): a linha do ativo
+  compactada, e a lista de compras ao clicar no símbolo — mesmo padrão da
+  transação de supermercado que expande em sub-itens. Cada compra mostra o
+  resultado dela isolada; é informação que o custo médio esconde, porque a
+  cotação é a mesma para todas mas o preço pago em cada uma não.
+- **Cadastrar de novo um ativo que já existe é uma SEGUNDA COMPRA, não um
+  erro.** O schema tem `@@unique([type, symbol])`, então existe uma única
+  posição por tipo+símbolo. `POST /api/investments` procura essa posição
+  antes de criar: se ela existe, a compra entra como `InvestmentPurchase`
+  dela e a rota devolve `200` com `merged: true` (a tela usa esse sinal para
+  avisar que a compra entrou numa posição que já existia, em vez de parecer
+  que não fez nada por não ter surgido linha nova). Sem isso o segundo
+  cadastro estourava a constraint, virava 500 e o formulário — que ignorava o
+  status da resposta — fechava sem mensagem: era o "não consigo adicionar
+  mais nada".
+  - **Nada é sobrescrito nem recalculado na segunda compra**: não há custo
+    médio para atualizar. Nome e descrição da posição existente ficam como
+    estão — a compra nova fala de quantidade e preço, não da identidade do
+    ativo.
+- **`DELETE /api/investments/[id]/purchases/[purchaseId]`** apaga UMA compra
+  (o "excluir" de cada linha da lista expandida). Existe porque, com o custo
+  médio derivado, um aporte digitado errado não tem mais como ser consertado
+  por um PATCH — sem essa rota o único caminho seria apagar o ativo inteiro e
+  relançar tudo.
+  - **Apagar a última compra apaga a posição junto**, na MESMA transação do
+    Postgres: posição sem compra apareceria zerada na tabela, indistinguível
+    de um ativo realmente sem saldo.
+  - A compra é buscada com `holdingId` no filtro, não só pelo id dela, para
+    uma URL com o par trocado não apagar a compra de outro ativo.
+- **Dicas de "?" nos campos e nos cabeçalhos** (`src/components/InfoHint.tsx`).
+  Existem porque "Preço médio (R$)" era ambíguo o suficiente para gerar
+  dúvida real — "é quanto 1 real compra do ativo, ou quanto custa 1 unidade
+  dele?". O campo virou "Preço pago por unidade (R$)" e a dica responde a
+  pergunta com exemplo. Os textos ficam todos no objeto `HINTS` da página, num
+  lugar só, porque a dica do formulário e a do cabeçalho falam do MESMO
+  conceito e precisam continuar dizendo a mesma coisa.
+  - A abertura é estado do React (`onMouseEnter`/`onFocus`/`onClick`) e não
+    `:hover` no CSS, para funcionar no teclado e no toque — e para ser
+    testável em jsdom, que não aplica CSS. Também não usa o `title` nativo:
+    demora ~1s, não estiliza e não caberia um exemplo em duas linhas.
+- **Coluna "Vs. compra" (não mais "24h").** A tabela mostra quanto a cotação
+  atual está acima/abaixo do preço médio pago, **por unidade** do ativo
+  (`priceVsCost` em R$ e `priceVsCostPercent` em %, calculados na rota de
+  preços). Substituiu a variação de 24h do CoinGecko, que falava de como o
+  mercado andou no dia e não de como a posição está indo. O percentual é nulo
+  quando `avgCostBrl` é 0 (ativo recebido, não comprado) — não existe
+  "quanto subiu em relação a zero" —, mas o valor absoluto continua válido.
+  - `CryptoPrice.brl24hChange` continua existindo em `src/lib/prices.ts`
+    porque descreve o payload do CoinGecko, mas **nenhuma tela o usa** hoje.
+- **Coluna "Descrição" (`InvestmentHolding.notes`).** Comentário curto do
+  usuário sobre o ativo, editável direto na célula da tabela (grava por
+  `PATCH` ao sair do campo ou no Enter, que só tira o foco). Texto em branco
+  grava `null`, não `""` — mesma regra da nota de aluguel (seção 4.2). O
+  texto em edição vive em estado local do componente, e não no `data` da
+  página: a tela recarrega as cotações a cada 30s e ler do `data` faria o
+  recarregamento apagar o que está sendo digitado.
 
 ### 4.8. Backup e restauração em JSON (`src/lib/backup.ts`, `/api/backup/*`)
 - Bloco no fim de `/relatorios` (`BackupPanel`), separado do relatório de
@@ -325,6 +396,22 @@ SeasonalRental ──> SeasonalRentalExpense
   `BACKUP_FORMAT_VERSION`; a rota recusa arquivo com versão maior que a que
   ela entende. Cada tabela é opcional no schema zod (padrão `[]`), então
   backup gerado antes de um model novo existir continua restaurável.
+- **Formato 2 (compras de investimento) — o único exemplo real de migração
+  de formato até agora.** No formato 1 a posição guardava `quantity` e
+  `avgCostBrl` em colunas próprias; hoje quem guarda isso é
+  `InvestmentPurchase` (seção 4.7). Um arquivo do formato 1 continua
+  restaurável: os dois campos antigos seguem aceitos no
+  `investmentHoldingSchema` (como opcionais, marcados LEGADO) e
+  `legacyPurchasesFromHoldings()` os converte em UMA compra equivalente —
+  mesmo total investido, mesmo custo médio, mesmo resultado.
+  - Sem essa conversão, restaurar um backup antigo deixaria a posição com
+    zero compras e ela apareceria **zerada** na tela: perda de dado silenciosa,
+    justamente no arquivo que existe para evitar perda de dado.
+  - O id da compra convertida é derivado do id da posição
+    (`<holdingId>-legacy`) e não um cuid novo, para a restauração continuar
+    idempotente: aplicar o mesmo arquivo duas vezes não dobra a posição.
+  - Uma posição que já venha com compras no arquivo é ignorada pela conversão
+    mesmo que ainda carregue os campos antigos — o dado real ganha do legado.
 
 ### 4.9. Mover uma transação para o ledger da família (`POST /api/transactions/[id]/move-to-family`)
 - Botão "→ Família" por linha em `/transacoes` (só lá: no dashboard e em
@@ -354,6 +441,94 @@ SeasonalRental ──> SeasonalRentalExpense
 - `ConfirmDialog` passou a renderizar a mensagem com `whitespace-pre-line`
   para caber essa explicação em vários parágrafos; mensagem de uma linha
   não muda em nada.
+
+### 4.10. Pop-up de erro e log de movimentações (`src/lib/logClient.ts`, `logFiles.ts`)
+
+Duas metades do mesmo requisito — "nada fica sem registro": o pop-up é o canal
+IMEDIATO (o usuário sabe na hora o que quebrou e por quê) e os arquivos de log
+são o registro PERMANENTE.
+
+**Interceptação num lugar só.** O app tem mais de 50 chamadas de API espalhadas
+em páginas, componentes e modais. Em vez de instrumentar uma por uma,
+`installFetchMonitor()` **troca o `window.fetch` global** por um invólucro, e
+`installGlobalErrorHandlers()` escuta `error` e `unhandledrejection`. Os dois
+são instalados pelo `ActivityLogger` (no layout raiz, dentro do
+`ErrorPopupProvider`). Consequência boa: chamada de API escrita amanhã já nasce
+registrada, sem ninguém lembrar de nada.
+
+**O que É e o que NÃO é registrado:**
+- Escrita (POST/PUT/PATCH/DELETE) bem-sucedida → linha `gravou`.
+- Qualquer falha (status fora de 2xx, rede caída, exceção de JS) → linha `erro`
+  em DOIS arquivos (ver abaixo) + pop-up.
+- Entrada numa aba → linha `navegou`.
+- **Leitura bem-sucedida NÃO é registrada.** O dashboard e a tela de
+  investimentos consultam a API a cada 30s; registrar isso soterraria as
+  mudanças de verdade no meio de milhares de linhas de consulta. Leitura que
+  FALHA é erro, e é registrada.
+
+**Três regras que existem para não criar laço nem ruído** (as três com teste):
+1. **A rota `/api/logs` não é interceptada.** Se fosse, uma falha de gravação
+   viraria um evento de log, que falharia, que geraria outro evento — laço
+   infinito. Falha de log vai só para o `console.error`.
+2. **Requisição cancelada não é erro** (`AbortError`). O `SeasonalRentalModal`
+   aborta a prévia a cada tecla; sem essa regra a tela encheria de pop-up
+   enquanto o usuário digita.
+3. **As rotas de prévia são registradas mas não abrem pop-up**
+   (`POPUP_MUTED_PATHS`). Elas recalculam a cada tecla e podem legitimamente
+   recusar um estado intermediário do formulário — o modal já mostra esse aviso
+   embutido.
+
+**Estrutura dos arquivos**, criada automaticamente (`mkdir recursive`):
+
+```
+logs/
+  2026-08-31/
+    transacoes.log     ← toda movimentação da aba, INCLUSIVE os erros dela
+    investimentos.log
+    erros.log          ← o log PARALELO: só erros, de todas as abas
+```
+
+- **Um erro é gravado nos DOIS arquivos.** No da aba, para a cronologia ficar
+  completa (dá para ver o que o usuário fez imediatamente antes de quebrar); no
+  `erros.log`, para "houve erro hoje?" ser respondido abrindo um arquivo só.
+  Nenhum dos dois, lido isolado, esconde um erro.
+- **A pasta do dia usa a data LOCAL**, não UTC — é o dia que o usuário
+  reconhece. Por isso o horário de cada linha também é local, com o
+  deslocamento escrito (`-03:00`): misturar local e UTC faria a movimentação
+  das 23h aparecer no arquivo do dia seguinte.
+- O nome do arquivo vem do `slug` de `src/lib/appTabs.ts` — a MESMA lista que
+  alimenta o `Nav`. Aba desconhecida cai em `outras-rotas.log` em vez de ser
+  descartada (`safeSlug`), inclusive um slug que tentasse escapar da pasta.
+- `logs/` está no `.gitignore`: é dado de execução da máquina, não código.
+
+**O pop-up** (`ErrorPopupProvider`) mostra título, "o que aconteceu", "por que
+aconteceu", "o que fazer" e um bloco recolhido de detalhe técnico. Os textos
+saem de `src/lib/errorExplain.ts`, que traduz status HTTP e exceção em
+explicação — a MESMA explicação vai para o pop-up e para o log, então os dois
+nunca contam versões diferentes da falha.
+- Erros entram numa **fila**: duas falhas em sequência são lidas as duas, e não
+  uma sobrescrevendo a outra. Falhas idênticas seguidas são unificadas.
+- **Não fecha ao clicar fora**, ao contrário do `ConfirmDialog`: aqui o
+  conteúdo é explicação que precisa ter sido lida.
+- Formulários que já mostravam aviso embutido continuam mostrando — agora
+  aparecem os dois. É deliberado: o pop-up é o canal garantido, o aviso
+  embutido é o contexto ao lado do campo.
+
+### 4.11. Eco do valor interpretado (`src/components/ParsedValueHint.tsx`)
+
+Embaixo de cada campo decimal aparece o que o sistema entendeu: digitar
+`1.000` mostra `= R$ 1,00`. Existe porque `1.000` é ambíguo de verdade (mil ou
+um e zero centésimos) e **nenhuma regra acerta os dois casos** — a regra atual
+(um separador sozinho é decimal) foi escolhida para não quebrar uma quantidade
+de cripto como `1.500` ETH, ver seção 6. Em vez de adivinhar melhor, a tela
+mostra a interpretação e o usuário corrige antes de salvar.
+- `kind="money"` formata como moeda; `kind="plain"` mostra número puro (a
+  quantidade de um ativo não é valor em reais).
+- Campo vazio não mostra nada; texto ilegível mostra o aviso — a mesma
+  informação que o envio daria depois, só mais cedo.
+- **Não está na lista de diárias do modal de aluguel**, de propósito: aquela
+  lista já mostra lado a lado o valor da tabela e o valor aplicado por noite,
+  então a interpretação já está visível, e um eco por linha dobraria a altura.
 
 ## 5. Convenções e armadilhas técnicas (ver detalhe completo em `instaladorParaIA.md` seção 5)
 
@@ -417,7 +592,20 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
     qualquer coisa destrutiva significa mexer nos dados reais. Gere um backup
     por `/relatorios` (seção 4.8) antes, e prefira testes que só inserem
     (registros com id de prefixo próprio, fáceis de apagar depois).
-12. **O Next carrega `.env.local` com prioridade sobre `.env`** (e sobre
+12. **`prisma db push` que remove coluna exige consentimento explícito do
+    usuário** (visto em 2026-08-31, ao mover quantidade/custo médio de
+    `InvestmentHolding` para `InvestmentPurchase`). O Prisma detecta que foi
+    invocado por um agente de IA e **recusa** `--accept-data-loss`, pedindo
+    que o usuário seja informado e consinta; só então aceita a variável
+    `PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION` com o texto da autorização.
+    Não é bug: é o comportamento correto num repositório cujo único banco tem
+    dado real (armadilha 11). O roteiro que funcionou: exportar backup por
+    `/api/backup/export` → pedir autorização → `db push` → **matar o `next dev`
+    de verdade** (o `PrismaClient` fica em cache no `globalThis`; parar só o
+    wrapper do `npm` deixa o processo filho vivo segurando a porta 3000) →
+    reaplicar o backup em modo `merge`, que recupera o dado pela conversão de
+    formato antigo (seção 4.8).
+13. **O Next carrega `.env.local` com prioridade sobre `.env`** (e sobre
     variáveis já definidas no `process.env` do processo que chamou o
     `next dev`). Se você criar um `.env.local` para um teste, apague-o depois —
     senão o app fica apontando para outro lugar sem nenhum aviso. Armadilha
@@ -443,13 +631,56 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
   reaproveite `src/lib/categorize.ts` em vez de criar lógica paralela.
 - **Datas:** todo campo de formulário `<input type="date">` deve passar
   por `dateOnly.ts` antes de tocar o banco ou um filtro `gte`/`lte`.
+- **Valores decimais digitados:** todo campo financeiro é
+  `<input type="text" inputMode="decimal">` (nunca `type="number"`, que não
+  aceita o formato brasileiro), então o que chega é texto livre. Passe SEMPRE
+  por `parseDecimalInput` de `src/lib/decimalInput.ts` — nunca por
+  `Number(valor.replace(",", "."))`, que só acerta o caso de uma vírgula
+  sozinha e transforma "1.234,56" em `NaN`.
+  - Vírgula e ponto são o **mesmo** separador decimal ("3,07" === "3.07"), e
+    o separador de milhar é entendido nos dois formatos ("1.234,56" e
+    "1,234.56"). O único ponto ambíguo — um ponto sozinho com três casas,
+    como "1.234" — é lido como decimal de propósito: a regra alternativa
+    quebraria uma quantidade de cripto como "1.500". A justificativa completa
+    está no comentário no topo do arquivo.
+  - `parseDecimalInput` devolve `null` para campo vazio ou texto que não
+    descreve número; o formulário avisa na tela e **não envia**, em vez de
+    mandar `NaN` (que o `JSON.stringify` vira `null`) e receber um 400 que a
+    tela não mostrava. Use `parseDecimalInputOr(raw, 0)` onde "em branco"
+    significa um valor conhecido (ex: taxa de limpeza).
+  - **Só ruído CONHECIDO é removido** (espaços, inclusive o não-quebrável do
+    `Intl`, e prefixo de moeda: "R$", "BRL", "US$", "$", "€"…). Qualquer outro
+    caractere estranho **recusa** o valor. A primeira versão removia tudo que
+    não fosse dígito ou separador, e por isso `"1e3"` virava 13 e `"12abc"`
+    virava 12, silenciosamente — num campo de dinheiro, recusar e avisar é
+    melhor do que adivinhar.
+  - A ambiguidade que sobra (`1.000` = 1, não mil) é resolvida na tela, não
+    por adivinhação: o campo ecoa o valor interpretado logo abaixo
+    (`ParsedValueHint`, seção 4.11).
+  - A varredura completa de formatos está em `tests/lib/decimalInput.test.ts`,
+    numa **tabela** `[texto digitado, número esperado, por quê]` — é o lugar
+    para conferir (ou estender) o que o sistema faz com cada formato, incluindo
+    os casos em que a resposta é "recusa".
+  - Limites conhecidos e aceitos: `"10,0000000000000000000000000001"` vira 10
+    (o `double` não guarda além de ~17 dígitos significativos), e um valor
+    absurdamente grande (`1e21`) passa pelo parser mas estoura o
+    `Decimal(20, 8)` do banco — daria 500 sem mensagem na tela. Nenhum dos dois
+    aparece em uso real; se um dia aparecer, o lugar de tratar é um `.max()` no
+    schema zod da rota, não no parser.
+  - Nas rotas de API, embrulhe o campo com `decimalField(z.number()...)` do
+    mesmo arquivo: a API é a fronteira do sistema e também aceita "3,07",
+    para não depender de qual cliente formatou o corpo.
+  - **Não unifique isso com o `parseBrlNumber` dos parsers de fatura/NFC-e**
+    (`invoiceParsers/santander.ts`, `receiptParsers/nfce.ts`): aqueles leem
+    um formato de máquina, com separador fixo e conhecido, vindo de um PDF.
+    A separação é proposital.
 - Todo o código já tem comentários JSDoc em português explicando o "por
   quê" de decisões não óbvias — ao editar uma função, mantenha/atualize
   o comentário se a lógica mudar (comentário desatualizado é peor que
   nenhum comentário).
 - **Todo código novo vem com teste.** A suíte cobre 100% de `src/` e o
   limite está travado no `vitest.config.mts` — `npm run test:coverage`
-  falha se a cobertura cair. Ver seção 9 para como rodar e para as
+  falha se a cobertura cair. Ver seção 8 para como rodar e para as
   armadilhas de teste já mapeadas.
 
 ## 7. Mapa de arquivos (fonte, sem gerados)
@@ -464,7 +695,8 @@ src/app/
     credit-cards/                         → CRUD de cartões
     invoices/{parse,confirm}/             → importação de fatura (2 etapas)
     receipts/{parse,confirm}/             → importação de NFC-e (2 etapas)
-    investments/, investments/prices/     → holdings + cotação ao vivo
+    investments/, investments/prices/      → posições + cotação ao vivo (e o resultado de cada compra)
+    investments/[id]/purchases/[purchaseId]/ → apaga uma compra individual (seção 4.7)
     views/                                → filtros salvos do dashboard
     budget/summary/                       → orçamento 15/10/75 do mês corrente
     family-transactions/                  → ledger isolado da família
@@ -472,6 +704,7 @@ src/app/
     seasonal-rentals/[id]/ (GET não existe, só PUT/DELETE) → aluguéis de temporada
     rental-settlements/, rental-settlements/preview/ → repasses David/Família
     backup/export/, backup/restore/       → backup completo do banco em JSON (seção 4.8)
+    logs/                                 → grava as movimentações em logs/AAAA-MM-DD/ (seção 4.10)
   categorias/, transacoes/, transacoes-familia/,
   receitas/, investimentos/, relatorios/,
   importar-fatura/                        → páginas (uma pasta por rota)
@@ -479,7 +712,12 @@ src/app/
 src/components/                           → um componente de UI por arquivo
   Nav, ThemeToggle                        → navegação/tema global
   ConfirmDialog, DateRangePicker,
-  CollapsibleSection                      → utilitários de UI reutilizáveis
+  CollapsibleSection, InfoHint,
+  ParsedValueHint                         → utilitários de UI reutilizáveis
+                                            (InfoHint = dica "?" no hover/foco;
+                                             ParsedValueHint = eco do valor lido)
+  ErrorPopupProvider, ActivityLogger      → pop-up global de erro + interceptação
+                                            de movimentações (seção 4.10)
   SummaryCards, MonthlyTrendChart,
   CategoryPieChart, FreeToSpendBanner,
   PendingReturnsPanel                     → dashboard
@@ -493,6 +731,13 @@ src/components/                           → um componente de UI por arquivo
 src/lib/
   prisma.ts                               → singleton do PrismaClient (driver adapter)
   dateOnly.ts                             → helpers de data sem bug de fuso (USE SEMPRE)
+  decimalInput.ts                         → vírgula OU ponto como separador decimal, em formulário e API (USE SEMPRE)
+  investments.ts                          → soma das compras em posição + resultado por compra (quantidade/custo médio NÃO são colunas)
+  appTabs.ts                              → lista única das abas (alimenta o Nav E o nome do arquivo de log)
+  errorExplain.ts                         → status HTTP/exceção → "o que aconteceu" e "por que" (pop-up e log usam o mesmo texto)
+  logEvents.ts                            → formato da linha de log + descrição legível de cada rota
+  logClient.ts                            → interceptação do fetch global e dos erros de JS (navegador)
+  logFiles.ts                             → gravação em logs/AAAA-MM-DD/<aba>.log e erros.log (servidor)
   types.ts, format.ts                     → tipos e formatação compartilhados
   dateRanges.ts                           → presets de período (este mês, últimos 3 meses, etc.)
   categorize.ts                           → auto-categorização por keywords
@@ -516,21 +761,24 @@ prisma/
   schema.prisma                           → modelos (com comentários /// já incluídos)
   seed.ts                                 → 15 categorias padrão (upsert, idempotente)
 
-tests/                                    → suíte de testes (ver seção 9)
+tests/                                    → suíte de testes (ver seção 8)
   setup.dom.ts                            → setup do ambiente jsdom (matchers, cleanup, layout fingido p/ Recharts)
   helpers/prismaMock.ts                   → mock do PrismaClient (proxy que cria vi.fn() por model/método)
   helpers/http.ts                          → monta Request/Response para testar route handlers
   helpers/text.ts, helpers/dom.ts         → normalização de espaço do Intl e busca de campo por rótulo
   lib/, api/                              → testes de src/lib e src/app/api (ambiente node)
+  client/                                 → runtime de navegador que não é componente (interceptação de fetch): é lib, mas precisa de window, então roda no projeto "dom"
   components/, pages/, hooks/             → testes de componentes e páginas (ambiente jsdom)
 vitest.config.mts                         → configuração do Vitest (2 projects + cobertura em 100%)
+
+logs/                                     → NÃO versionado: um arquivo por aba, por dia (seção 4.10)
 ```
 
-## 9. Testes (`tests/`, `vitest.config.mts`)
+## 8. Testes (`tests/`, `vitest.config.mts`)
 
 - **Rodar:** `npm test` (uma vez), `npm run test:watch` (contínuo),
   `npm run test:coverage` (com relatório de cobertura).
-- **1242 testes** cobrindo **100% de `src/`** (statements, branches,
+- **1634 testes** cobrindo **100% de `src/`** (statements, branches,
   functions e lines). O limite de 100% está fixado em
   `coverage.thresholds` do `vitest.config.mts`: **se a cobertura cair, o
   comando falha**. Ao adicionar código novo, adicione teste junto.
@@ -574,7 +822,7 @@ vitest.config.mts                         → configuração do Vitest (2 projec
   existe. Não remova o guard (é ele que estreita o tipo para o TypeScript) e
   não apague a anotação sem antes achar um jeito real de exercitá-lo.
 
-## 10. Onde procurar mais detalhes
+## 9. Onde procurar mais detalhes
 
 - **Como instalar/rodar do zero:** `instaladorParaIA.md` (raiz do projeto).
 - **Detalhe campo a campo dos models:** comentários `///` direto em

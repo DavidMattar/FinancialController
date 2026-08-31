@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { ensureFixedSubItems } from "@/lib/transactionItems";
 
@@ -16,8 +17,8 @@ const cardSchema = z.object({
 const transactionSchema = z.object({
   date: z.string(),
   description: z.string().min(1),
-  amount: z.number(),
-  amountUsd: z.number().nullable().optional(),
+  amount: decimalField(z.number()),
+  amountUsd: decimalField(z.number().nullable().optional()),
   type: z.enum(["EXPENSE", "INCOME", "PAYMENT"]),
   section: z.enum(["DESPESA", "CREDITO", "PARCELAMENTO"]),
   installmentCurrent: z.number().nullable().optional(),
@@ -36,8 +37,8 @@ const confirmSchema = z.object({
   bank: z.string().min(1),
   referenceMonth: z.string().regex(/^\d{4}-\d{2}$/),
   dueDate: z.string().nullable().optional(),
-  totalAmount: z.number(),
-  minPayment: z.number().nullable().optional(),
+  totalAmount: decimalField(z.number()),
+  minPayment: decimalField(z.number().nullable().optional()),
   fileName: z.string(),
   primaryCard: cardSchema,
   transactions: z.array(transactionSchema).min(1),

@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 
 /** Formato aceito no corpo do PATCH — ambos os campos são opcionais. */
 const updateSchema = z.object({
   description: z.string().min(1).optional(),
-  amount: z.number().positive().optional(),
+  amount: decimalField(z.number().positive().optional()),
 });
 
 /**

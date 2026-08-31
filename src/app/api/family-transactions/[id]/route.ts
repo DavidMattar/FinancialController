@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDate } from "@/lib/dateOnly";
 
 const updateSchema = z.object({
   date: z.string().optional(),
   description: z.string().min(1).optional(),
-  amount: z.number().positive().optional(),
+  amount: decimalField(z.number().positive().optional()),
   type: z.enum(["EXPENSE", "INCOME"]).optional(),
   notes: z.string().nullable().optional(),
 });

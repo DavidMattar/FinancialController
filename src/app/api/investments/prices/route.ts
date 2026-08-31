@@ -2,23 +2,37 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCryptoPrices, getCurrencyRatesInBrl, type CryptoPrice } from "@/lib/prices";
 import { toCoingeckoId } from "@/lib/cryptoIds";
+import { aggregatePurchases, computePriceVsCost, computePurchaseResult } from "@/lib/investments";
 
 /**
  * GET /api/investments/prices
- * Busca a cotação atual de cada posição de investimento e calcula o valor de mercado,
- * lucro/perda absoluto e percentual — tudo recalculado do zero a cada chamada, nunca
- * armazenado no banco (o preço de cripto/moeda muda a cada segundo).
+ * Busca a cotação atual de cada posição de investimento e calcula o valor de
+ * mercado, lucro/perda absoluto e percentual — tudo recalculado do zero a cada
+ * chamada, nunca armazenado no banco (o preço de cripto/moeda muda a cada
+ * segundo).
  *
- * Esta é a ÚNICA rota do sistema que faz chamadas para serviços externos na internet:
- * - CoinGecko (api.coingecko.com) para preço de criptomoedas em BRL, sem necessidade de API key.
- * - open.er-api.com para taxas de câmbio de moedas estrangeiras em BRL, também sem API key.
- * O app é local-first (Postgres local, sem nuvem) e essas duas são a exceção deliberada,
- * pois cotações de mercado não podem ser calculadas localmente.
- * Se qualquer uma das chamadas falhar (ex: sem internet), o `.catch` faz o preço daquele
- * tipo de ativo cair para "desconhecido" (null) em vez de derrubar a rota inteira.
+ * Devolve os dois níveis que a tela usa:
+ * - a **posição compactada**: quantidade e custo médio somados das compras
+ *   (`src/lib/investments.ts`), valor atual e lucro em R$ e %;
+ * - o resultado de **cada compra** (`purchases[]`), que é o que aparece quando
+ *   o usuário expande a linha do ativo. Os dois fecham entre si por construção,
+ *   porque o total é a soma das compras.
+ *
+ * Esta é a ÚNICA rota do sistema que faz chamadas para serviços externos na
+ * internet:
+ * - CoinGecko (api.coingecko.com) para preço de criptomoedas em BRL, sem API key.
+ * - open.er-api.com para taxas de câmbio de moedas estrangeiras em BRL, idem.
+ * O app é local-first (Postgres local, sem nuvem) e essas duas são a exceção
+ * deliberada, pois cotações de mercado não podem ser calculadas localmente.
+ * Se qualquer uma das chamadas falhar (ex: sem internet), o `.catch` faz o preço
+ * daquele tipo de ativo cair para "desconhecido" (null) em vez de derrubar a
+ * rota inteira.
  */
 export async function GET() {
-  const holdings = await prisma.investmentHolding.findMany({ orderBy: { createdAt: "asc" } });
+  const holdings = await prisma.investmentHolding.findMany({
+    orderBy: { createdAt: "asc" },
+    include: { purchases: { orderBy: { createdAt: "asc" } } },
+  });
 
   const cryptoHoldings = holdings.filter((h) => h.type === "CRYPTO");
   const currencyHoldings = holdings.filter((h) => h.type === "CURRENCY");
@@ -35,19 +49,18 @@ export async function GET() {
   let totalCost = 0;
 
   const result = holdings.map((h) => {
-    const quantity = Number(h.quantity);
-    const avgCostBrl = Number(h.avgCostBrl);
-    const cost = quantity * avgCostBrl;
+    // Quantidade e custo médio NÃO vêm do banco: são a soma das compras.
+    const { quantity, cost, avgCostBrl } = aggregatePurchases(h.purchases);
 
     let priceBrl: number | null = null;
-    let change24h: number | null = null;
     if (h.type === "CRYPTO") {
-      const price = cryptoPrices[toCoingeckoId(h.symbol)];
-      priceBrl = price?.brl ?? null;
-      change24h = price?.brl24hChange ?? null;
+      priceBrl = cryptoPrices[toCoingeckoId(h.symbol)]?.brl ?? null;
     } else {
       priceBrl = currencyRates[h.symbol.toUpperCase()] ?? null;
     }
+
+    // Variação da cotação contra o preço pago, por unidade (coluna "Vs. compra").
+    const { priceVsCost, priceVsCostPercent } = computePriceVsCost(priceBrl, avgCostBrl);
 
     const currentValue = priceBrl !== null ? quantity * priceBrl : null;
     const gainLoss = currentValue !== null ? currentValue - cost : null;
@@ -61,14 +74,19 @@ export async function GET() {
       type: h.type,
       symbol: h.symbol,
       name: h.name,
+      // Descrição livre do ativo, escrita pelo usuário na própria tabela.
+      notes: h.notes,
       quantity,
       avgCostBrl,
       cost,
       priceBrl,
-      change24h,
+      priceVsCost,
+      priceVsCostPercent,
       currentValue,
       gainLoss,
       gainLossPercent,
+      // Resultado compra por compra, para a linha expandida do ativo.
+      purchases: h.purchases.map((p) => computePurchaseResult(p, priceBrl)),
     };
   });
 

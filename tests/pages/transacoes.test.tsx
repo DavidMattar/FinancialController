@@ -274,6 +274,32 @@ describe("página /transacoes — formulário manual", () => {
     expect(campoPorRotulo("Data")).toHaveValue("2026-08-15");
   });
 
+  it("aceita o valor com separador de milhar e ponto decimal", async () => {
+    // Antes só uma vírgula sozinha funcionava: "1.234,56" virava NaN, o corpo
+    // ia com null e a API respondia 400 sem que a tela mostrasse nada.
+    await abrirFormulario();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "GELADEIRA" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "1.234,56" } });
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find((c) => c[1]?.method === "POST");
+      expect(JSON.parse(post![1].body).amount).toBe(1234.56);
+    });
+  });
+
+  it("avisa e não envia quando o valor não é um número", async () => {
+    await abrirFormulario();
+
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: "X" } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: "abc" } });
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+
+    expect(screen.getByText(/Valor inválido/)).toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method === "POST")).toHaveLength(0);
+  });
+
   it("cria a transação com os dados digitados", async () => {
     await abrirFormulario();
 

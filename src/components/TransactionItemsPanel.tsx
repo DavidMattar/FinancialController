@@ -8,6 +8,8 @@
 import { useEffect, useState } from "react";
 import { formatBRL } from "@/lib/format";
 import { isEcommerceMerchant } from "@/lib/ecommerceMerchants";
+import { parseDecimalInput } from "@/lib/decimalInput";
+import ParsedValueHint from "@/components/ParsedValueHint";
 
 // Um item de detalhamento salvo no banco (tabela TransactionItem).
 interface Item {
@@ -39,6 +41,8 @@ export default function TransactionItemsPanel({
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Valor de sub-item que não descreve um número (ver src/lib/decimalInput.ts).
+  const [amountError, setAmountError] = useState(false);
   // Cópia local do checkbox "pendente de devolução", para o checkbox responder
   // instantaneamente ao clique sem esperar a resposta da API (otimista).
   const [pendingReturnLocal, setPendingReturnLocal] = useState(pendingReturn);
@@ -58,16 +62,26 @@ export default function TransactionItemsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transactionId]);
 
-  /** Envia o formulário de novo item: cria o item via API e limpa os campos. */
+  /**
+   * Envia o formulário de novo item: cria o item via API e limpa os campos.
+   * O valor passa por `parseDecimalInput` (vírgula ou ponto como separador
+   * decimal, ver `src/lib/decimalInput.ts`); valor ilegível avisa na tela.
+   */
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
     if (!description || !amount) return;
+    const parsedAmount = parseDecimalInput(amount);
+    if (parsedAmount === null) {
+      setAmountError(true);
+      return;
+    }
+    setAmountError(false);
     setSubmitting(true);
     try {
       await fetch(`/api/transactions/${transactionId}/items`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ description, amount: Number(amount.replace(",", ".")) }),
+        body: JSON.stringify({ description, amount: parsedAmount }),
       });
       setDescription("");
       setAmount("");
@@ -174,6 +188,10 @@ export default function TransactionItemsPanel({
             placeholder="0,00"
             className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
           />
+          <ParsedValueHint raw={amount} kind="money" />
+          {amountError && (
+            <p className="text-xs text-red-600 dark:text-red-400">Use vírgula ou ponto.</p>
+          )}
         </div>
         <button
           type="submit"

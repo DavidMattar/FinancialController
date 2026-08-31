@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { ensureFixedSubItems } from "@/lib/transactionItems";
 import { parseLocalDate } from "@/lib/dateOnly";
@@ -13,7 +14,7 @@ import type { TransactionType } from "@/generated/prisma/client";
 const updateSchema = z.object({
   date: z.string().optional(),
   description: z.string().min(1).optional(),
-  amount: z.number().positive().optional(),
+  amount: decimalField(z.number().positive().optional()),
   type: z.enum(["EXPENSE", "INCOME", "PAYMENT"]).optional(),
   categoryId: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),

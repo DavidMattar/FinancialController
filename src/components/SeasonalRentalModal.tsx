@@ -22,6 +22,8 @@
 
 import { useEffect, useState } from "react";
 import { formatBRL, formatDate } from "@/lib/format";
+import { parseDecimalInput, parseDecimalInputOr } from "@/lib/decimalInput";
+import ParsedValueHint from "@/components/ParsedValueHint";
 
 interface ExpenseRow {
   description: string;
@@ -131,15 +133,19 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Soma dos gastos extras digitados, aceitando tanto vírgula quanto ponto decimal.
-  const extrasTotal = expenses.reduce((sum, e) => sum + (Number(e.amount.replace(",", ".")) || 0), 0);
+  // Soma dos gastos extras digitados. Vírgula ou ponto decimal (e separador de
+  // milhar) são resolvidos por `parseDecimalInput` — ver src/lib/decimalInput.ts.
+  // Linha ainda em branco ou ilegível conta 0 nesta soma, que só alimenta o preview.
+  const extrasTotal = expenses.reduce((sum, e) => sum + parseDecimalInputOr(e.amount, 0), 0);
 
   // Só as diárias com valor numérico válido viram customização de verdade — um
   // campo apagado pelo usuário faz aquela noite voltar a seguir a tabela.
   const numericNightRateOverrides: Record<string, number> = {};
   for (const [key, raw] of Object.entries(nightRateOverrides)) {
-    const value = Number(raw.replace(",", "."));
-    if (raw.trim() !== "" && Number.isFinite(value) && value >= 0) numericNightRateOverrides[key] = value;
+    // `parseDecimalInput` devolve null tanto para campo apagado quanto para texto
+    // que não descreve número — os dois casos fazem a noite voltar para a tabela.
+    const value = parseDecimalInput(raw);
+    if (value !== null && value >= 0) numericNightRateOverrides[key] = value;
   }
   // Chave estável (ordenada) do mapa de diárias, para servir de dependência do
   // useEffect sem disparar a cada re-render só por identidade de objeto.
@@ -152,12 +158,14 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
   // 300ms sem digitação (debounce), para não disparar uma requisição a cada tecla.
   // O AbortController cancela a requisição anterior se o usuário continuar digitando.
   useEffect(() => {
-    if (!checkIn || !checkOut || !netAmountReceived) {
+    const netAmount = parseDecimalInput(netAmountReceived);
+    // Valor ainda em branco OU ilegível: não há o que prever ainda. Antes disso
+    // um valor ilegível virava NaN e ia para a API só para tomar um 400.
+    if (!checkIn || !checkOut || netAmount === null) {
       setPreview(null);
       return;
     }
-    const netAmount = Number(netAmountReceived.replace(",", "."));
-    const cleaning = Number((cleaningFee || "0").replace(",", "."));
+    const cleaning = parseDecimalInputOr(cleaningFee, 0);
     const controller = new AbortController();
     const timeout = setTimeout(() => {
       fetch("/api/seasonal-rentals/preview", {
@@ -242,6 +250,24 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!checkIn || !checkOut || !netAmountReceived) return;
+    // Valor recebido e gastos extras aceitam vírgula ou ponto decimal; texto que
+    // não descreve número para aqui com aviso, em vez de ir como NaN no corpo.
+    const parsedNetAmount = parseDecimalInput(netAmountReceived);
+    if (parsedNetAmount === null) {
+      setError("Valor recebido inválido — use vírgula ou ponto (ex: 3,07).");
+      return;
+    }
+    // Gastos extras: linha incompleta continua sendo descartada (regra original).
+    const parsedExpenses: { description: string; amount: number }[] = [];
+    for (const ex of expenses) {
+      if (!ex.description || !ex.amount) continue;
+      const amount = parseDecimalInput(ex.amount);
+      if (amount === null) {
+        setError("Gasto extra com valor inválido — use vírgula ou ponto (ex: 3,07).");
+        return;
+      }
+      parsedExpenses.push({ description: ex.description, amount });
+    }
     setSubmitting(true);
     setError(null);
     try {
@@ -252,17 +278,15 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
           platform,
           checkIn,
           checkOut,
-          netAmountReceived: Number(netAmountReceived.replace(",", ".")),
-          cleaningFee: Number((cleaningFee || "0").replace(",", ".")),
+          netAmountReceived: parsedNetAmount,
+          cleaningFee: parseDecimalInputOr(cleaningFee, 0),
           // Nota em branco é gravada como null (e não como ""), para "sem nota"
           // ser um único valor no banco.
           notes: notes.trim() === "" ? null : notes.trim(),
           // O mapa vai inteiro: o servidor substitui as diárias customizadas por
           // completo (mapa vazio = todas as noites voltam para a tabela).
           nightRateOverrides: numericNightRateOverrides,
-          expenses: expenses
-            .filter((ex) => ex.description && ex.amount)
-            .map((ex) => ({ description: ex.description, amount: Number(ex.amount.replace(",", ".")) })),
+          expenses: parsedExpenses,
         }),
       });
       const data = await res.json();
@@ -336,6 +360,8 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
               onChange={(e) => setNetAmountReceived(e.target.value)}
               className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
             />
+            {/* Eco do valor interpretado — desfaz a ambiguidade de "1.000". */}
+            <ParsedValueHint raw={netAmountReceived} kind="money" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-slate-500 dark:text-slate-400">10% do David</label>
@@ -360,6 +386,7 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
               }}
               className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
             />
+            <ParsedValueHint raw={cleaningFee} kind="money" />
           </div>
         </div>
 
@@ -447,29 +474,35 @@ export default function SeasonalRentalModal({ rental, onClose, onSaved }: Props)
             </button>
           </div>
           {expenses.map((ex, i) => (
-            <div key={i} className="flex gap-2">
-              <input
-                type="text"
-                placeholder="ex: gás, produtos de limpeza"
-                value={ex.description}
-                onChange={(e) => updateExpense(i, { description: e.target.value })}
-                className="flex-1 border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
-              />
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0,00"
-                value={ex.amount}
-                onChange={(e) => updateExpense(i, { amount: e.target.value })}
-                className="w-24 border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
-              />
-              <button
-                type="button"
-                onClick={() => removeExpense(i)}
-                className="text-slate-400 hover:text-red-500 text-xs px-1"
-              >
-                remover
-              </button>
+            <div key={i} className="space-y-0.5">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="ex: gás, produtos de limpeza"
+                  value={ex.description}
+                  onChange={(e) => updateExpense(i, { description: e.target.value })}
+                  className="flex-1 border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
+                />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={ex.amount}
+                  onChange={(e) => updateExpense(i, { amount: e.target.value })}
+                  className="w-24 border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeExpense(i)}
+                  className="text-slate-400 hover:text-red-500 text-xs px-1"
+                >
+                  remover
+                </button>
+              </div>
+              {/* Fora do flex, para o eco não competir por largura com os campos. */}
+              <div className="text-right">
+                <ParsedValueHint raw={ex.amount} kind="money" />
+              </div>
             </div>
           ))}
         </div>

@@ -8,6 +8,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Nav from "@/components/Nav";
+import ErrorPopupProvider from "@/components/ErrorPopupProvider";
+import ActivityLogger from "@/components/ActivityLogger";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -56,8 +58,18 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="min-h-full flex flex-col">
-        <Nav />
-        <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-6">{children}</main>
+        {/*
+          ErrorPopupProvider envolve TUDO: é o canal único por onde qualquer
+          falha do app aparece na tela, explicada. ActivityLogger fica dentro
+          dele (precisa do `report`) e não renderiza nada — só instala a
+          interceptação que grava toda movimentação e todo erro em
+          `logs/AAAA-MM-DD/`. Ver src/lib/logClient.ts.
+        */}
+        <ErrorPopupProvider>
+          <ActivityLogger />
+          <Nav />
+          <main className="flex-1 w-full max-w-6xl mx-auto px-4 sm:px-6 py-6">{children}</main>
+        </ErrorPopupProvider>
       </body>
     </html>
   );

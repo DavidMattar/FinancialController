@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { parseLocalDate, parseLocalDateEndOfDay } from "@/lib/dateOnly";
 import type { Prisma } from "@/generated/prisma/client";
@@ -7,7 +8,7 @@ import type { Prisma } from "@/generated/prisma/client";
 const createSchema = z.object({
   date: z.string(),
   description: z.string().min(1),
-  amount: z.number().positive(),
+  amount: decimalField(z.number().positive()),
   type: z.enum(["EXPENSE", "INCOME"]).default("EXPENSE"),
   notes: z.string().nullable().optional(),
 });

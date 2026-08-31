@@ -181,23 +181,56 @@ model TransactionItem {
 }
 
 /// Uma posição de investimento acompanhada na página de Investimentos
-/// (uma cripto ou uma moeda estrangeira). O preço atual NÃO é guardado
-/// aqui — é buscado em tempo real (CoinGecko/open.er-api.com) e combinado
-/// com quantity/avgCostBrl na hora de exibir o valor e o lucro/prejuízo.
+/// (uma cripto ou uma moeda estrangeira). É só a IDENTIDADE do ativo: não
+/// guarda quantidade nem custo, porque os dois são a soma das compras
+/// (InvestmentPurchase). Nem o preço atual fica aqui — é buscado em tempo
+/// real (CoinGecko/open.er-api.com) na hora de exibir.
 model InvestmentHolding {
   id           String         @id @default(cuid())
   type         InvestmentType
   symbol       String
   name         String
-  quantity     Decimal        @db.Decimal(20, 8)
-  avgCostBrl   Decimal        @db.Decimal(14, 2)
+  /// Comentário curto do usuário sobre o ativo (coluna "Descrição" da tela).
   notes        String?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
 
+  purchases    InvestmentPurchase[]
+
   // Só pode existir uma posição por combinação tipo+símbolo (ex: um único
-  // holding de "CRYPTO BTC"); compras adicionais somam na mesma posição.
+  // holding de "CRYPTO BTC"); cada compra nova entra como InvestmentPurchase
+  // dessa mesma posição, e o total/custo médio saem da soma delas.
   @@unique([type, symbol])
+}
+
+/// Uma compra individual de um ativo — o aporte que o usuário fez numa data,
+/// numa quantidade, a um preço por unidade.
+///
+/// Por que uma tabela e não só um total no InvestmentHolding: a tela mostra a
+/// posição fechada (total + lucro) e permite EXPANDIR para ver o resultado de
+/// cada compra separadamente, do mesmo jeito que uma transação de supermercado
+/// expande em sub-itens. Guardar apenas o custo médio apagava a compra
+/// individual, e com ela a resposta de "quanto essa compra específica rendeu".
+///
+/// Estas são as ÚNICAS entradas gravadas: quantidade total e custo médio
+/// ponderado da posição são derivados daqui na leitura (src/lib/investments.ts),
+/// nunca colunas salvas — é a mesma regra do tableValue de aluguel, e é o que
+/// garante que os dois não possam divergir.
+model InvestmentPurchase {
+  id           String            @id @default(cuid())
+  holdingId    String
+  holding      InvestmentHolding @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  /// Quantidade do ativo comprada NESTE aporte (8 casas = precisão de satoshi).
+  quantity     Decimal           @db.Decimal(20, 8)
+  /// Reais pagos por UMA unidade do ativo neste aporte. 12 casas decimais
+  /// porque token barato custa muito menos de um centavo por unidade (1 SHIB
+  /// vale ~R$ 0,000026) — com 2 casas o preço arredondaria para 0,00 e o
+  /// resultado da posição sairia errado.
+  unitCostBrl  Decimal           @db.Decimal(24, 12)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([holdingId])
 }
 
 /// Um conjunto de filtros do dashboard/relatórios salvo pelo usuário para

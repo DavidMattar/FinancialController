@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { decimalField } from "@/lib/decimalInput";
 import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
@@ -8,21 +9,21 @@ import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/season
 
 const expenseSchema = z.object({
   description: z.string().min(1),
-  amount: z.number().positive(),
+  amount: decimalField(z.number().positive()),
 });
 
 const createSchema = z.object({
   platform: z.enum(["AIRBNB", "BOOKING"]),
   checkIn: z.string(),
   checkOut: z.string(),
-  netAmountReceived: z.number().nonnegative(),
-  cleaningFee: z.number().nonnegative().default(0),
+  netAmountReceived: decimalField(z.number().nonnegative()),
+  cleaningFee: decimalField(z.number().nonnegative().default(0)),
   notes: z.string().nullable().optional(),
   expenses: z.array(expenseSchema).default([]),
   // Diárias customizadas SÓ deste aluguel: { "YYYY-MM-DD": valor }. Cada noite
   // informada aqui substitui a tarifa da tabela de preços apenas neste
   // registro (ver SeasonalRental.nightRateOverrides no schema).
-  nightRateOverrides: z.record(z.string(), z.number().nonnegative()).nullish(),
+  nightRateOverrides: z.record(z.string(), decimalField(z.number().nonnegative())).nullish(),
 });
 
 export async function GET() {
