@@ -4,6 +4,7 @@ import {
   currentYearRange,
   lastMonthRange,
   lastNMonthsRange,
+  monthRange,
 } from "@/lib/dateRanges";
 
 /**
@@ -93,5 +94,30 @@ describe("currentYearRange", () => {
   it("usa o ano do relógio, não um ano fixo", () => {
     vi.setSystemTime(new Date(2030, 5, 5, 12, 0, 0));
     expect(currentYearRange()).toEqual({ from: "2030-01-01", to: "2030-12-31" });
+  });
+});
+
+describe("monthRange", () => {
+  it("vai do dia 1º ao último dia do mês pedido", () => {
+    expect(monthRange(2026, 8)).toEqual({ from: "2026-08-01", to: "2026-08-31" });
+  });
+
+  it("recebe o mês de 1 a 12, não o índice 0-11 do Date", () => {
+    expect(monthRange(2026, 1)).toEqual({ from: "2026-01-01", to: "2026-01-31" });
+    expect(monthRange(2026, 12)).toEqual({ from: "2026-12-01", to: "2026-12-31" });
+  });
+
+  it("acerta o último dia em mês de 30 dias", () => {
+    expect(monthRange(2026, 4)).toEqual({ from: "2026-04-01", to: "2026-04-30" });
+  });
+
+  it("acerta fevereiro em ano comum e em ano bissexto", () => {
+    expect(monthRange(2026, 2).to).toBe("2026-02-28");
+    expect(monthRange(2024, 2).to).toBe("2024-02-29");
+  });
+
+  it("não depende do relógio (é o mês pedido, não o corrente)", () => {
+    vi.setSystemTime(new Date(2030, 5, 5, 12, 0, 0));
+    expect(monthRange(2019, 11)).toEqual({ from: "2019-11-01", to: "2019-11-30" });
   });
 });

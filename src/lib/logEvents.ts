@@ -130,7 +130,7 @@ const RESOURCE_PATTERNS: [RegExp, string][] = [
   [/^\/api\/investments\/prices$/, "cotação de investimentos"],
   [/^\/api\/investments(\/|$)/, "investimento"],
   [/^\/api\/views(\/|$)/, "view salva"],
-  [/^\/api\/budget\/summary$/, "orçamento do mês"],
+  [/^\/api\/budget\/summary$/, "orçamento do período"],
   [/^\/api\/seasonal-rentals\/preview$/, "prévia de aluguel"],
   [/^\/api\/seasonal-rentals(\/|$)/, "aluguel de temporada"],
   [/^\/api\/rental-settlements\/preview$/, "prévia de repasse"],

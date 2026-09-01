@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatBRL, formatDate, monthLabel } from "@/lib/format";
+import { formatBRL, formatDate, monthLabel, periodLabel } from "@/lib/format";
 import { normalizarEspacos } from "../helpers/text";
 
 /**
@@ -75,5 +75,40 @@ describe("monthLabel", () => {
 
   it("funciona com um ano diferente do atual", () => {
     expect(monthLabel("1999-03")).toBe("março de 1999");
+  });
+});
+
+describe("periodLabel", () => {
+  it("descreve um mês inteiro pelo nome do mês", () => {
+    expect(periodLabel("2026-08-01", "2026-08-31")).toBe("agosto de 2026");
+  });
+
+  it("descreve vários meses inteiros pelas pontas", () => {
+    expect(periodLabel("2026-06-01", "2026-08-31")).toBe("junho de 2026 a agosto de 2026");
+  });
+
+  it("atravessa a virada de ano", () => {
+    expect(periodLabel("2025-12-01", "2026-02-28")).toBe("dezembro de 2025 a fevereiro de 2026");
+  });
+
+  it("aceita mês de 30 dias e fevereiro bissexto como mês inteiro", () => {
+    expect(periodLabel("2026-04-01", "2026-04-30")).toBe("abril de 2026");
+    expect(periodLabel("2024-02-01", "2024-02-29")).toBe("fevereiro de 2024");
+  });
+
+  it("usa as datas quando o período não começa no dia 1º", () => {
+    expect(periodLabel("2026-08-05", "2026-08-31")).toBe("05/08/2026 a 31/08/2026");
+  });
+
+  it("usa as datas quando o período não termina no último dia do mês", () => {
+    expect(periodLabel("2026-06-01", "2026-08-20")).toBe("01/06/2026 a 20/08/2026");
+  });
+
+  it("não cai no bug de fuso (1º de janeiro não vira 31 de dezembro)", () => {
+    expect(periodLabel("2026-01-01", "2026-01-31")).toBe("janeiro de 2026");
+  });
+
+  it("um único dia é descrito pelas datas", () => {
+    expect(periodLabel("2026-08-10", "2026-08-10")).toBe("10/08/2026 a 10/08/2026");
   });
 });

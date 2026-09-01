@@ -1,27 +1,48 @@
 "use client";
 
 /**
- * Página "/receitas" — mostra as receitas do mês atual e como elas se
- * dividem pela regra de orçamento 15/10/75 (15% livre para gastar, 10%
- * dízimo, 75% investimento), além da seção de aluguéis de temporada
- * (`SeasonalRentalsSection`). O período é sempre o mês corrente — esta
- * página não tem seletor de data, ao contrário do dashboard.
+ * Página "/receitas" — mostra as receitas de UM mês e como elas se dividem
+ * pela regra de orçamento 15/10/75 (15% livre para gastar, 10% dízimo, 75%
+ * investimento), além da seção de aluguéis de temporada
+ * (`SeasonalRentalsSection`).
+ *
+ * O mês exibido é escolhido pelo usuário nos dois seletores do próprio título
+ * ("Receitas — [mês] de [ano]"), que começam no mês corrente. Antes o período
+ * era fixo no mês atual; os seletores existem para consultar um mês passado
+ * (ou já lançar o próximo) sem sair da tela. Todo o conteúdo da página segue
+ * essa escolha: os lançamentos listados e os quatro cards do orçamento.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import TransactionsTable from "@/components/TransactionsTable";
 import SeasonalRentalsSection from "@/components/SeasonalRentalsSection";
-import { currentMonthRange } from "@/lib/dateRanges";
+import { monthRange } from "@/lib/dateRanges";
 import { formatBRL } from "@/lib/format";
+import type { BudgetSummary } from "@/lib/budget";
 import type { Category, Transaction } from "@/lib/types";
 
-/** Espelha o resultado de GET /api/budget/summary — resumo do orçamento do mês corrente. */
-interface BudgetSummary {
-  periodFrom: string;
-  periodTo: string;
-  totalIncome: number;
-  freeToSpend: { percent: number; allocated: number; spent: number; available: number };
-  tithe: { percent: number; amount: number };
-  investment: { percent: number; amount: number };
+/**
+ * Os doze meses com o nome em português, calculados uma vez pelo `Intl` (em
+ * vez de uma lista escrita à mão) para nunca divergirem do nome que o resto
+ * do app já mostra em datas e títulos.
+ */
+const MESES = Array.from({ length: 12 }, (_, i) => ({
+  value: i + 1,
+  label: new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(new Date(2026, i, 1)),
+}));
+
+/** Quantos anos para trás e para frente o seletor de ano oferece. */
+const ANOS_PARA_TRAS = 5;
+const ANOS_PARA_FRENTE = 1;
+
+/**
+ * Anos oferecidos no seletor: uma janela em volta do ano corrente. É uma
+ * janela fixa, e não a lista de anos que existem no banco, para a página não
+ * precisar de uma consulta a mais só para montar um select — esticá-la é
+ * mudar as duas constantes acima.
+ */
+function anosDisponiveis(anoAtual: number): number[] {
+  const total = ANOS_PARA_TRAS + ANOS_PARA_FRENTE + 1;
+  return Array.from({ length: total }, (_, i) => anoAtual - ANOS_PARA_TRAS + i);
 }
 
 export default function ReceitasPage() {
@@ -29,28 +50,35 @@ export default function ReceitasPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [summary, setSummary] = useState<BudgetSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  // Mês/ano escolhidos nos seletores do título — começam no mês corrente.
+  const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [year, setYear] = useState(() => new Date().getFullYear());
 
-  // Mês corrente — esta página não permite escolher outro período.
-  const range = currentMonthRange();
+  const range = monthRange(year, month);
 
-  /** Busca em paralelo: as receitas do mês, a lista de categorias e o resumo de orçamento (15/10/75). */
-  async function load() {
+  /**
+   * Busca em paralelo: as receitas do mês escolhido, a lista de categorias e o
+   * resumo de orçamento (15/10/75) DESSE mesmo mês — o resumo é parametrizado
+   * pelo período, então trocar o seletor troca os quatro cards junto com a
+   * lista de lançamentos.
+   */
+  const load = useCallback(async () => {
     setLoading(true);
     const [txRes, catRes, summaryRes] = await Promise.all([
       fetch(`/api/transactions?type=INCOME&from=${range.from}&to=${range.to}`),
       fetch("/api/categories"),
-      fetch("/api/budget/summary"),
+      fetch(`/api/budget/summary?from=${range.from}&to=${range.to}`),
     ]);
     setTransactions(await txRes.json());
     setCategories(await catRes.json());
     setSummary(await summaryRes.json());
     setLoading(false);
-  }
+  }, [range.from, range.to]);
 
+  // Recarrega a cada troca de mês/ano (o `load` só muda quando o período muda).
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [load]);
 
   /** Troca a categoria de uma receita e recarrega tudo (o resumo de orçamento pode mudar se a categoria afetar o cálculo). */
   async function handleCategoryChange(id: string, categoryId: string | null) {
@@ -62,17 +90,40 @@ export default function ReceitasPage() {
     load();
   }
 
-  // Nome do mês/ano por extenso (ex: "agosto de 2026") para o título da página.
-  const monthLabel = summary
-    ? new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(
-        new Date(summary.periodFrom + "T00:00:00"),
-      )
-    : "";
+  const classeSeletor =
+    "border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-md px-2 py-1 text-base font-normal";
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
-        Receitas {monthLabel && `— ${monthLabel}`}
+      <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100 flex flex-wrap items-center gap-2">
+        <span>Receitas —</span>
+        {/* `aria-label` (em vez de um <label> irmão, padrão dos formulários do
+            app) porque o rótulo visível aqui é a própria frase do título. */}
+        <select
+          aria-label="Mês"
+          value={month}
+          onChange={(e) => setMonth(Number(e.target.value))}
+          className={classeSeletor}
+        >
+          {MESES.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+        <span>de</span>
+        <select
+          aria-label="Ano"
+          value={year}
+          onChange={(e) => setYear(Number(e.target.value))}
+          className={classeSeletor}
+        >
+          {anosDisponiveis(new Date().getFullYear()).map((a) => (
+            <option key={a} value={a}>
+              {a}
+            </option>
+          ))}
+        </select>
       </h1>
 
       {summary && (

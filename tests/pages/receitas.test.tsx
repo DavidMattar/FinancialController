@@ -30,16 +30,32 @@ const resumo = {
   freeToSpend: { percent: 15, allocated: 1500, spent: 500, available: 1000 },
   tithe: { percent: 10, amount: 1000 },
   investment: { percent: 75, amount: 7500 },
+  months: [
+    {
+      month: "2026-08",
+      income: 10000,
+      allocated: 1500,
+      spent: 500,
+      monthAvailable: 1000,
+      cumulativeAvailable: 1000,
+    },
+  ],
 };
 
 function comDados(receitas: unknown[] = [{ id: "tx-1", description: "SALARIO" }]) {
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
     if (init?.method === "PATCH") return { json: async () => ({ ok: true }) };
     if (url === "/api/categories") return { json: async () => [{ id: "cat-1", name: "Salário" }] };
-    if (url === "/api/budget/summary") return { json: async () => resumo };
+    if (url.startsWith("/api/budget/summary")) return { json: async () => resumo };
     if (url.startsWith("/api/transactions")) return { json: async () => receitas };
     throw new Error(`rota inesperada: ${url}`);
   });
+}
+
+/** A URL da última chamada a uma rota (o teste confere o período pedido). */
+function ultimaChamada(prefixo: string): string {
+  const chamadas = fetchMock.mock.calls.filter((c) => String(c[0]).startsWith(prefixo));
+  return String(chamadas[chamadas.length - 1][0]);
 }
 
 beforeEach(() => {
@@ -55,7 +71,7 @@ afterEach(() => {
 });
 
 describe("página /receitas", () => {
-  it("busca só as receitas do mês corrente", async () => {
+  it("começa no mês corrente e busca receitas e orçamento desse mês", async () => {
     comDados();
 
     render(<ReceitasPage />);
@@ -65,26 +81,71 @@ describe("página /receitas", () => {
         "/api/transactions?type=INCOME&from=2026-08-01&to=2026-08-31",
       ),
     );
-    expect(fetchMock).toHaveBeenCalledWith("/api/budget/summary");
+    // O resumo 15/10/75 é pedido para o MESMO mês, não mais fixo no corrente.
+    expect(fetchMock).toHaveBeenCalledWith("/api/budget/summary?from=2026-08-01&to=2026-08-31");
     expect(fetchMock).toHaveBeenCalledWith("/api/categories");
   });
 
-  it("mostra o mês corrente no título", async () => {
+  it("mostra o mês corrente selecionado nos seletores do título", async () => {
     comDados();
 
     render(<ReceitasPage />);
 
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /Receitas — agosto de 2026/ })).toBeInTheDocument(),
-    );
+    expect(screen.getByText(/Receitas —/)).toBeInTheDocument();
+    expect((screen.getByLabelText("Mês") as HTMLSelectElement).value).toBe("8");
+    expect((screen.getByLabelText("Ano") as HTMLSelectElement).value).toBe("2026");
   });
 
-  it("não mostra o mês no título antes do resumo chegar", () => {
-    fetchMock.mockReturnValue(new Promise(() => {}));
+  it("oferece os doze meses em português e uma janela de anos", async () => {
+    comDados();
 
     render(<ReceitasPage />);
 
-    expect(screen.getByRole("heading", { name: "Receitas" })).toBeInTheDocument();
+    const meses = screen.getByLabelText("Mês") as HTMLSelectElement;
+    expect(meses.options).toHaveLength(12);
+    expect(meses.options[0].textContent).toBe("janeiro");
+    expect(meses.options[11].textContent).toBe("dezembro");
+
+    const anos = Array.from((screen.getByLabelText("Ano") as HTMLSelectElement).options).map(
+      (o) => o.value,
+    );
+    // Cinco anos para trás e um para frente, em volta de 2026.
+    expect(anos).toEqual(["2021", "2022", "2023", "2024", "2025", "2026", "2027"]);
+  });
+
+  it("trocar o mês rebusca as receitas e o orçamento do mês escolhido", async () => {
+    comDados();
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.change(screen.getByLabelText("Mês"), { target: { value: "2" } });
+
+    await waitFor(() =>
+      expect(ultimaChamada("/api/transactions?type=INCOME")).toBe(
+        "/api/transactions?type=INCOME&from=2026-02-01&to=2026-02-28",
+      ),
+    );
+    expect(ultimaChamada("/api/budget/summary")).toBe(
+      "/api/budget/summary?from=2026-02-01&to=2026-02-28",
+    );
+  });
+
+  it("trocar o ano rebusca o mesmo mês no ano escolhido (inclusive fevereiro bissexto)", async () => {
+    comDados();
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.change(screen.getByLabelText("Mês"), { target: { value: "2" } });
+    await waitFor(() => expect(ultimaChamada("/api/budget/summary")).toContain("2026-02"));
+    fireEvent.change(screen.getByLabelText("Ano"), { target: { value: "2024" } });
+
+    await waitFor(() =>
+      expect(ultimaChamada("/api/budget/summary")).toBe(
+        "/api/budget/summary?from=2024-02-01&to=2024-02-29",
+      ),
+    );
   });
 
   it("mostra os quatro cards da regra 15/10/75", async () => {
@@ -110,6 +171,15 @@ describe("página /receitas", () => {
     render(<ReceitasPage />);
 
     expect(screen.getByText("Carregando...")).toBeInTheDocument();
+  });
+
+  it("não mostra os cards antes do resumo chegar (mas o título já aparece)", () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+
+    render(<ReceitasPage />);
+
+    expect(screen.getByText(/Receitas —/)).toBeInTheDocument();
+    expect(screen.queryByText("Total de receitas no mês")).not.toBeInTheDocument();
   });
 
   it("lista as receitas do mês", async () => {
@@ -165,7 +235,7 @@ describe("página /receitas", () => {
   it("mostra disponível negativo quando a fatia dos 15% estourou", async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url === "/api/categories") return { json: async () => [] };
-      if (url === "/api/budget/summary") {
+      if (url.startsWith("/api/budget/summary")) {
         return {
           json: async () => ({
             ...resumo,

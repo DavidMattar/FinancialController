@@ -10,7 +10,11 @@ import { normalizarEspacos as norm } from "../helpers/text";
  * últimos 6 meses, independente do filtro escolhido.
  */
 vi.mock("@/components/FreeToSpendBanner", () => ({
-  default: () => <div data-testid="banner">banner de orçamento</div>,
+  default: ({ range }: any) => (
+    <div data-testid="banner">
+      banner de orçamento {range.from} a {range.to}
+    </div>
+  ),
 }));
 vi.mock("@/components/SavedViewsBar", () => ({
   default: ({ onApply }: any) => (
@@ -153,6 +157,21 @@ describe("página / (dashboard)", () => {
 
     expect(screen.getByTestId("banner")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("pendencias")).toBeInTheDocument());
+  });
+
+  it("passa o período selecionado para o banner de orçamento", async () => {
+    comDados();
+
+    render(<DashboardPage />);
+
+    // O banner dos 15% fala do mesmo período filtrado na tela, não do mês fixo.
+    expect(screen.getByTestId("banner")).toHaveTextContent("2026-08-01 a 2026-08-31");
+
+    fireEvent.click(screen.getByRole("button", { name: "Últimos 3 meses" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("banner")).toHaveTextContent("2026-06-01 a 2026-08-31"),
+    );
   });
 
   it("mostra a evolução com os meses devolvidos pela API", async () => {

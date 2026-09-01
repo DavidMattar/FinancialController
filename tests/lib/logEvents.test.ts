@@ -188,7 +188,7 @@ describe("describeRequest", () => {
     expect(describeRequest("DELETE", "/api/investments/a/purchases/b")).toBe(
       "apagou compra de investimento",
     );
-    expect(describeRequest("GET", "/api/budget/summary")).toBe("consultou orçamento do mês");
+    expect(describeRequest("GET", "/api/budget/summary")).toBe("consultou orçamento do período");
   });
 
   it("aceita método em minúsculo", () => {

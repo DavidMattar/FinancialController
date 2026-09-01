@@ -26,10 +26,10 @@ arquivo deve responder.
 | `/` | `src/app/page.tsx` | Dashboard: banner de orçamento, cards de resumo, gráficos, pendências de devolução, filtros/views salvas. |
 | `/transacoes` | `src/app/transacoes/page.tsx` | CRUD de transações (ledger principal), tabela com filtros. |
 | `/transacoes-familia` | `src/app/transacoes-familia/page.tsx` | Ledger **isolado** da família (não entra em nada do resto do app). |
-| `/receitas` | `src/app/receitas/page.tsx` | Receitas do mês + seção "Aluguéis de Temporada" (colapsável). |
+| `/receitas` | `src/app/receitas/page.tsx` | Receitas de UM mês (escolhido nos seletores de mês/ano do próprio título) + seção "Aluguéis de Temporada" (colapsável). |
 | `/categorias` | `src/app/categorias/page.tsx` | CRUD de categorias (cor, ícone, palavras-chave, flags). |
 | `/investimentos` | `src/app/investimentos/page.tsx` | Holdings de cripto/moeda com cotação ao vivo. |
-| `/relatorios` | `src/app/relatorios/page.tsx` | Gráficos de tendência mensal + regra de orçamento 15/10/75. No fim da página, bloco separado de **backup/restauração** do banco inteiro (seção 4.8). |
+| `/relatorios` | `src/app/relatorios/page.tsx` | Filtro de período/categorias, gráficos de tendência mensal e export CSV. No fim da página, bloco separado de **backup/restauração** do banco inteiro (seção 4.8). A regra 15/10/75 **não** fica aqui — ela é do dashboard e de `/receitas` (seção 4.1). |
 | `/importar-fatura` | `src/app/importar-fatura/page.tsx` | Duas abas: importar fatura de cartão (PDF) e nota fiscal/NFC-e (PDF ou texto colado). |
 | `src/app/layout.tsx` | — | Layout raiz: `Nav`, tema (dark/light), fontes, e o par `ErrorPopupProvider` + `ActivityLogger` que faz o pop-up de erro e o log de toda movimentação valerem em qualquer tela (seção 4.10). |
 
@@ -78,17 +78,60 @@ SeasonalRental ──> SeasonalRentalExpense
 
 ## 4. Regras de negócio importantes (não são óbvias lendo só o código)
 
-### 4.1. Orçamento mensal 15/10/75 (`/api/budget/summary`, `src/app/relatorios`)
-- Sempre referente ao **mês corrente** (calculado a partir de `new Date()`),
-  não recebe parâmetro de período — é intencional, não uma limitação a
-  corrigir.
-- 15% da receita do mês = "livre para gastar". `Category.deductsFromFreeSpend`
+### 4.1. Orçamento 15/10/75 (`src/lib/budget.ts`, `/api/budget/summary`)
+- 15% da receita do período = "livre para gastar". `Category.deductsFromFreeSpend`
   (toggle na tela de Categorias, só em categorias EXPENSE) marca quais
-  categorias contam contra essa fatia.
-- `disponível = 15% da receita do mês − soma de despesas do mês nas
+  categorias contam contra essa fatia. Os outros 10% (dízimo) e 75%
+  (investimento) são **informativos**: não são abatidos de nada.
+- `disponível = 15% da receita do período − soma das despesas do período nas
   categorias marcadas`. **Sempre recalculado do zero a cada request**,
   nunca um saldo salvo/acumulado — evita que o valor "arraste" erro e
   lida naturalmente com edições/exclusões/lançamentos retroativos.
+- **O período é PARAMETRIZADO** (`?from=YYYY-MM-DD&to=YYYY-MM-DD`). Era fixo no
+  mês corrente até 2026-08-31; hoje quem manda o período é a tela:
+  - `/receitas` manda o mês escolhido nos seletores de mês/ano do título
+    (`monthRange` de `dateRanges.ts`), e os quatro cards seguem esse mês junto
+    com a lista de lançamentos.
+  - o dashboard manda o **mesmo período do `DateRangePicker`**, para o banner
+    dos 15% falar do que está filtrado na tela, e não de um mês fixo.
+  - **sem parâmetro a resposta continua sendo a do mês corrente** — é o padrão
+    de quem chamar a rota sem nada.
+  - Data fora do formato `YYYY-MM-DD` devolve **400**, em vez de cair no mês
+    corrente: período errado exibido sem aviso é pior do que um erro visível
+    (o pop-up da seção 4.10 mostra a mensagem).
+- **A fatia de 15% ACUMULA dentro do período, mês a mês.** Estourar num mês não
+  zera na virada, e sobrar num mês aumenta o disponível do seguinte. Com
+  receita de R$ 100/mês (15% = R$ 15) e R$ 32 gastos no primeiro mês: fim do
+  1º mês −R$ 17, fim do 2º −R$ 2, fim do 3º (sem gastar nada) +R$ 13.
+  - Matematicamente o total do período é só "15% da receita do período menos o
+    gasto descontável do período" — o acúmulo não muda o resultado. O campo
+    `months` da resposta (um item por mês, com `allocated`, `spent`,
+    `monthAvailable` e `cumulativeAvailable`) existe para mostrar o CAMINHO, que
+    é a pergunta real: "em que mês eu estourei?".
+  - Os totais são derivados da soma de `months` justamente para o último
+    `cumulativeAvailable` fechar sempre com `freeToSpend.available` — as duas
+    visões do banner não podem divergir (mesma postura do `aggregatePurchases`
+    da seção 4.7).
+  - Mês do período **sem nenhuma transação entra zerado** na lista
+    (`enumerateMonths` não deixa furo): é o mês em que a receita entrou sem
+    gasto que faz o acumulado voltar ao positivo, e sem ele a conta "não
+    fecharia" na leitura.
+  - O mês de referência de cada transação é o do calendário **local**
+    (`monthKey`), não UTC — uma transação de 31/08 à noite cairia em setembro
+    (mesma armadilha de fuso da seção 5.2 e do log da seção 4.10).
+- A conta inteira vive em `src/lib/budget.ts` e é **pura** (não toca banco nem
+  rede): a rota só junta as duas consultas do Prisma com o cálculo. É o que
+  permite testar o acúmulo sozinho, e é o único lugar onde os percentuais
+  15/10/75 estão escritos.
+- No banner do dashboard (`FreeToSpendBanner`) o detalhamento mês a mês só
+  aparece com **mais de um mês** no período (num mês só ele repetiria os
+  números de cima) e vem **recolhido** num `<details>`, para o banner não
+  crescer 12 linhas quando o filtro é "Este ano".
+- O texto do período vem de `periodLabel` (`format.ts`): meses inteiros são
+  descritos por nome ("agosto de 2026", "junho de 2026 a agosto de 2026") e um
+  período que corta o mês no meio cai nas datas ("10/06/2026 a 20/08/2026") —
+  dizer "agosto de 2026" para 05/08–20/08 seria mentira, e o banner existe
+  justamente para dizer de que período é o número.
 - Categorias com `deductsFromFreeSpend=true` por padrão no seed:
   Alimentação, Assinaturas e Streaming, Vestuário, Lazer, Outros.
 
@@ -698,7 +741,7 @@ src/app/
     investments/, investments/prices/      → posições + cotação ao vivo (e o resultado de cada compra)
     investments/[id]/purchases/[purchaseId]/ → apaga uma compra individual (seção 4.7)
     views/                                → filtros salvos do dashboard
-    budget/summary/                       → orçamento 15/10/75 do mês corrente
+    budget/summary/                       → orçamento 15/10/75 do período (?from/?to; sem parâmetro, mês corrente)
     family-transactions/                  → ledger isolado da família
     seasonal-rentals/, seasonal-rentals/preview/,
     seasonal-rentals/[id]/ (GET não existe, só PUT/DELETE) → aluguéis de temporada
@@ -730,7 +773,8 @@ src/components/                           → um componente de UI por arquivo
 
 src/lib/
   prisma.ts                               → singleton do PrismaClient (driver adapter)
-  dateOnly.ts                             → helpers de data sem bug de fuso (USE SEMPRE)
+  dateOnly.ts                             → helpers de data sem bug de fuso, ida e volta (USE SEMPRE)
+  budget.ts                               → regra 15/10/75 e acúmulo mês a mês da fatia de 15% (pura, seção 4.1)
   decimalInput.ts                         → vírgula OU ponto como separador decimal, em formulário e API (USE SEMPRE)
   investments.ts                          → soma das compras em posição + resultado por compra (quantidade/custo médio NÃO são colunas)
   appTabs.ts                              → lista única das abas (alimenta o Nav E o nome do arquivo de log)
@@ -778,7 +822,7 @@ logs/                                     → NÃO versionado: um arquivo por ab
 
 - **Rodar:** `npm test` (uma vez), `npm run test:watch` (contínuo),
   `npm run test:coverage` (com relatório de cobertura).
-- **1634 testes** cobrindo **100% de `src/`** (statements, branches,
+- **1695 testes** cobrindo **100% de `src/`** (statements, branches,
   functions e lines). O limite de 100% está fixado em
   `coverage.thresholds` do `vitest.config.mts`: **se a cobertura cair, o
   comando falha**. Ao adicionar código novo, adicione teste junto.

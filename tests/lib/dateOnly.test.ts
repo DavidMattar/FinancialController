@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addDays, parseLocalDate, parseLocalDateEndOfDay } from "@/lib/dateOnly";
+import { addDays, formatLocalDate, parseLocalDate, parseLocalDateEndOfDay } from "@/lib/dateOnly";
 
 /**
  * Estas funções existem para evitar UM bug específico: `new Date("2026-07-06")`
@@ -112,5 +112,25 @@ describe("addDays", () => {
     const d = addDays(parseLocalDate("2017-10-14"), 1);
     expect(d.getDate()).toBe(15);
     expect(d.getMonth()).toBe(9);
+  });
+});
+
+describe("formatLocalDate", () => {
+  it("formata a data em YYYY-MM-DD", () => {
+    expect(formatLocalDate(new Date(2026, 7, 31))).toBe("2026-08-31");
+  });
+
+  it("preenche mês e dia com zero à esquerda", () => {
+    expect(formatLocalDate(new Date(2026, 0, 2))).toBe("2026-01-02");
+  });
+
+  it("é o caminho de volta de parseLocalDate", () => {
+    expect(formatLocalDate(parseLocalDate("2026-02-28"))).toBe("2026-02-28");
+  });
+
+  it("usa o dia LOCAL, não o dia em UTC", () => {
+    // 31/12 às 22h no Brasil (UTC-3) já é 01/01 em UTC: `toISOString()`
+    // devolveria o ano seguinte.
+    expect(formatLocalDate(new Date(2026, 11, 31, 22, 0))).toBe("2026-12-31");
   });
 });

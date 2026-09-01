@@ -5,7 +5,9 @@
  * selecionado (cards de total gasto, ticket médio, nº de transações),
  * gráficos de pizza por categoria (gastos e ganhos), evolução dos últimos
  * 6 meses, o painel de "devoluções pendentes" e uma lista das transações
- * mais recentes.
+ * mais recentes. O banner dos 15% no topo segue o mesmo período escolhido
+ * no DateRangePicker (com vários meses selecionados ele mostra o acumulado —
+ * ver FreeToSpendBanner e src/lib/budget.ts).
  */
 import { useEffect, useState } from "react";
 import DateRangePicker from "@/components/DateRangePicker";
@@ -81,7 +83,7 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <FreeToSpendBanner />
+      <FreeToSpendBanner range={range} />
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Dashboard</h1>

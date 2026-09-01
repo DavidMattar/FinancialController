@@ -1,70 +1,111 @@
 "use client";
 
 // Banner de destaque no topo do dashboard mostrando quanto ainda pode ser
-// gasto livremente no mês (regra dos 15% da receita), recalculado sempre a
-// partir dos dados atuais (nunca é um saldo salvo/acumulado).
+// gasto livremente (regra dos 15% da receita) no PERÍODO FILTRADO na tela,
+// recalculado sempre a partir dos dados atuais (nunca é um saldo salvo).
+//
+// A fatia de 15% acumula dentro do período: com vários meses selecionados, o
+// número grande é o saldo do período inteiro (estouro de um mês desconta do
+// mês seguinte, sobra de um mês soma no próximo) e o detalhamento recolhido
+// mostra o caminho mês a mês. A conta em si é do servidor
+// (`src/lib/budget.ts`) — aqui é só exibição.
 
 import { useEffect, useState } from "react";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, monthLabel, periodLabel } from "@/lib/format";
+import type { BudgetSummary } from "@/lib/budget";
+import type { DateRange } from "@/lib/dateRanges";
 
-/** Formato retornado por GET /api/budget/summary — ver regra 15/10/75 nesse endpoint. */
-interface BudgetSummary {
-  periodFrom: string;
-  periodTo: string;
-  totalIncome: number;
-  freeToSpend: { percent: number; allocated: number; spent: number; available: number };
-  tithe: { percent: number; amount: number };
-  investment: { percent: number; amount: number };
+interface Props {
+  /** Período selecionado no dashboard — o mesmo do `DateRangePicker`. */
+  range: DateRange;
 }
 
-export default function FreeToSpendBanner() {
+export default function FreeToSpendBanner({ range }: Props) {
   const [summary, setSummary] = useState<BudgetSummary | null>(null);
 
-  // Busca o resumo do orçamento do mês corrente uma vez, ao montar o componente.
-  // O endpoint sempre calcula para o mês atual — não recebe parâmetro de período.
+  // Rebusca o resumo a cada mudança de período. As dependências são as duas
+  // strings (e não o objeto `range`), porque o dashboard cria um objeto novo a
+  // cada troca de atalho e um período igual não precisa de nova requisição.
   useEffect(() => {
-    fetch("/api/budget/summary")
+    fetch(`/api/budget/summary?from=${range.from}&to=${range.to}`)
       .then((r) => r.json())
       .then(setSummary);
-  }, []);
+  }, [range.from, range.to]);
 
   if (!summary) return null;
 
   // Se o disponível para gastar ficou negativo, o banner vira vermelho (alerta).
   const negative = summary.freeToSpend.available < 0;
-  // "T00:00:00" evita que o Date seja interpretado em UTC e "volte" um dia
-  // (mesmo problema de timezone resolvido em src/lib/dateOnly.ts).
-  const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(
-    new Date(summary.periodFrom + "T00:00:00"),
-  );
+  const variosMeses = summary.months.length > 1;
+  // "Receita do mês" quando o período é um mês só; "do período" quando não é.
+  const rotuloReceita = variosMeses ? "Receita do período" : "Receita do mês";
 
   return (
     <div
-      className={`rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+      className={`rounded-xl border p-4 ${
         negative
           ? "bg-red-50 dark:bg-red-950/30 border-red-200 dark:border-red-900"
           : "bg-emerald-50 dark:bg-emerald-950/30 border-emerald-200 dark:border-emerald-900"
       }`}
     >
-      <div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">
-          Disponível para gastar (15% da receita) — {monthLabel}
-        </p>
-        <p
-          className={`text-3xl font-bold ${
-            negative ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"
-          }`}
-        >
-          {formatBRL(summary.freeToSpend.available)}
-        </p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Disponível para gastar (15% da receita) — {periodLabel(summary.periodFrom, summary.periodTo)}
+          </p>
+          <p
+            className={`text-3xl font-bold ${
+              negative ? "text-red-700 dark:text-red-400" : "text-emerald-700 dark:text-emerald-400"
+            }`}
+          >
+            {formatBRL(summary.freeToSpend.available)}
+          </p>
+          {variosMeses && (
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Acumulado dos {summary.months.length} meses do período.
+            </p>
+          )}
+        </div>
+        <div className="text-xs text-slate-500 dark:text-slate-400 sm:text-right">
+          <p>
+            {rotuloReceita}: {formatBRL(summary.totalIncome)}
+          </p>
+          <p>
+            15% alocado ({formatBRL(summary.freeToSpend.allocated)}) − gasto descontável (
+            {formatBRL(summary.freeToSpend.spent)})
+          </p>
+        </div>
       </div>
-      <div className="text-xs text-slate-500 dark:text-slate-400 sm:text-right">
-        <p>Receita do mês: {formatBRL(summary.totalIncome)}</p>
-        <p>
-          15% alocado ({formatBRL(summary.freeToSpend.allocated)}) − gasto descontável (
-          {formatBRL(summary.freeToSpend.spent)})
-        </p>
-      </div>
+
+      {/* O detalhamento só existe com mais de um mês: num mês só ele repetiria
+          exatamente os números de cima. Vem recolhido (<details>) para o banner
+          não crescer 12 linhas quando o filtro é "Este ano". */}
+      {variosMeses && (
+        <details className="mt-3 border-t border-slate-200/70 dark:border-slate-700/70 pt-2">
+          <summary className="text-xs text-slate-600 dark:text-slate-400 cursor-pointer">
+            Acúmulo mês a mês ({summary.months.length} meses)
+          </summary>
+          <ul className="mt-2 text-xs divide-y divide-slate-200/70 dark:divide-slate-700/70">
+            {summary.months.map((m) => (
+              <li key={m.month} className="flex flex-wrap items-baseline justify-between gap-x-3 py-1">
+                <span className="text-slate-700 dark:text-slate-300">{monthLabel(m.month)}</span>
+                <span className="text-slate-500 dark:text-slate-400">
+                  15% de {formatBRL(m.income)} = {formatBRL(m.allocated)} − gasto {formatBRL(m.spent)}
+                </span>
+                <span
+                  className={`font-medium whitespace-nowrap ${
+                    m.cumulativeAvailable < 0
+                      ? "text-red-700 dark:text-red-400"
+                      : "text-emerald-700 dark:text-emerald-400"
+                  }`}
+                >
+                  acumulado: {formatBRL(m.cumulativeAvailable)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }

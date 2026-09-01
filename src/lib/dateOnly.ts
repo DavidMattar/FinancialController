@@ -37,3 +37,18 @@ export function addDays(date: Date, days: number): Date {
   d.setDate(d.getDate() + days);
   return d;
 }
+
+/**
+ * Formata uma `Date` como "YYYY-MM-DD" usando os componentes de data LOCAIS —
+ * o caminho de volta de `parseLocalDate`.
+ *
+ * Não use `date.toISOString().slice(0, 10)` para isso: ele converte para UTC
+ * primeiro, então a meia-noite local de um fuso à frente de UTC (UTC+2, por
+ * exemplo) sai como o dia ANTERIOR — o mesmo bug de fuso descrito no topo
+ * deste arquivo, só na direção oposta.
+ */
+export function formatLocalDate(date: Date): string {
+  const mes = String(date.getMonth() + 1).padStart(2, "0");
+  const dia = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${mes}-${dia}`;
+}
