@@ -5,6 +5,7 @@
 // através do componente TransactionItemsPanel.
 
 import { Fragment, useState } from "react";
+import { toDateInputValue } from "@/lib/dateOnly";
 import { formatBRL, formatDate } from "@/lib/format";
 import TransactionItemsPanel from "./TransactionItemsPanel";
 import type { Category, Transaction } from "@/lib/types";
@@ -14,6 +15,15 @@ interface Props {
   categories: Category[];
   // Se informado, a coluna "categoria" vira um <select> editável em vez de só exibir o nome.
   onCategoryChange?: (transactionId: string, categoryId: string | null) => void;
+  // Se informado, a coluna "data" vira um <input type="date"> editável; recebe a
+  // data já no formato "YYYY-MM-DD" que a rota de PATCH espera.
+  onDateChange?: (transactionId: string, date: string) => void;
+  // Se informado, a coluna "descrição" vira um campo de texto editável.
+  // Cada coluna tem seu próprio callback (em vez de um "onEdit" genérico) porque
+  // é assim que a tabela já libera a categoria: cada tela permite só a edição que
+  // faz sentido nela. Hoje só /transacoes edita — no dashboard e em /receitas a
+  // tabela continua somente de leitura.
+  onDescriptionChange?: (transactionId: string, description: string) => void;
   // Se informado, mostra uma coluna extra com o botão "excluir".
   onDelete?: (transactionId: string) => void;
   onPendingReturnChange?: (transactionId: string, value: boolean) => void;
@@ -36,6 +46,8 @@ export default function TransactionsTable({
   transactions,
   categories,
   onCategoryChange,
+  onDateChange,
+  onDescriptionChange,
   onDelete,
   onPendingReturnChange,
   onMoveToFamily,
@@ -73,6 +85,15 @@ export default function TransactionsTable({
             // "pendente de devolução": compra em e-commerce marcada manualmente para
             // acompanhamento (ex: aguardando estorno) — a linha fica destacada em vermelho.
             const pending = Boolean(t.pendingReturn);
+            // O número da parcela aparece nos dois modos da célula de descrição
+            // (somente leitura e editável), por isso fica numa variável só.
+            const installmentLabel =
+              t.installmentCurrent && t.installmentTotal ? (
+                <span className="text-slate-400 dark:text-slate-500 text-xs whitespace-nowrap">
+                  {" "}
+                  ({t.installmentCurrent}/{t.installmentTotal})
+                </span>
+              ) : null;
             return (
               <Fragment key={t.id}>
                 <tr
@@ -83,29 +104,64 @@ export default function TransactionsTable({
                   }`}
                 >
                   <td className="py-2 pr-4 whitespace-nowrap text-slate-500 dark:text-slate-400">
-                    {formatDate(t.date)}
+                    {onDateChange ? (
+                      <input
+                        type="date"
+                        value={toDateInputValue(t.date)}
+                        aria-label={`Data de ${t.description}`}
+                        // Grava direto na mudança, como o select de categoria: o
+                        // <input type="date"> só dispara onChange com uma data
+                        // completa, então não existe estado intermediário para
+                        // segurar. Campo limpo ("") é ignorado — a transação
+                        // precisa de uma data, e apagar não é uma edição válida.
+                        onChange={(e) => {
+                          if (e.target.value) onDateChange(t.id, e.target.value);
+                        }}
+                        className="border border-transparent hover:border-slate-200 focus:border-indigo-500 dark:hover:border-slate-600 rounded px-1.5 py-1 text-sm bg-transparent dark:text-slate-300 outline-none [color-scheme:light] dark:[color-scheme:dark]"
+                      />
+                    ) : (
+                      formatDate(t.date)
+                    )}
                   </td>
                   <td className="py-2 pr-4 max-w-xs">
-                    <button
-                      type="button"
-                      onClick={() => setExpandedId(expanded ? null : t.id)}
-                      className={`flex items-center gap-1.5 text-left truncate hover:underline ${
-                        pending ? "text-red-700 dark:text-red-400" : "text-slate-900 dark:text-slate-100"
-                      }`}
-                      title={`${t.description} — clique para ver o detalhamento`}
-                    >
-                      <span className={`text-slate-400 dark:text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`}>
-                        ›
-                      </span>
-                      <span className="truncate">{t.description}</span>
-                      {pending && <span title="Pendente de devolução">🔴</span>}
-                    </button>
-                    {t.installmentCurrent && t.installmentTotal ? (
-                      <span className="text-slate-400 dark:text-slate-500 text-xs">
-                        {" "}
-                        ({t.installmentCurrent}/{t.installmentTotal})
-                      </span>
-                    ) : null}
+                    {onDescriptionChange ? (
+                      // No modo editável a descrição é um campo de texto, então a
+                      // seta vira o único alvo de clique para expandir — a linha
+                      // continua expansível sem que clicar no texto (para posicionar
+                      // o cursor) feche o detalhamento.
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(expanded ? null : t.id)}
+                          title={`${t.description} — clique para ver o detalhamento`}
+                          aria-label={`Ver detalhamento de ${t.description}`}
+                          className={`text-slate-400 dark:text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`}
+                        >
+                          ›
+                        </button>
+                        <DescriptionCell transaction={t} pending={pending} onSave={onDescriptionChange} />
+                        {pending && <span title="Pendente de devolução">🔴</span>}
+                        {installmentLabel}
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedId(expanded ? null : t.id)}
+                          className={`flex items-center gap-1.5 text-left truncate hover:underline ${
+                            pending ? "text-red-700 dark:text-red-400" : "text-slate-900 dark:text-slate-100"
+                          }`}
+                          title={`${t.description} — clique para ver o detalhamento`}
+                        >
+                          <span className={`text-slate-400 dark:text-slate-500 transition-transform ${expanded ? "rotate-90" : ""}`}>
+                            ›
+                          </span>
+                          <span className="truncate">{t.description}</span>
+                          {pending && <span title="Pendente de devolução">🔴</span>}
+                        </button>
+                        {installmentLabel}
+                      </>
+                    )}
                   </td>
                   <td className="py-2 pr-4 whitespace-nowrap text-slate-500 dark:text-slate-400">
                     {t.creditCard ? `****${t.creditCard.lastDigits}` : "—"}
@@ -179,6 +235,7 @@ export default function TransactionsTable({
                     <td colSpan={columnCount}>
                       <TransactionItemsPanel
                         transactionId={t.id}
+                        categoryId={t.categoryId ?? null}
                         transactionAmount={Number(t.amount)}
                         description={t.description}
                         hasCreditCard={Boolean(t.creditCardId)}
@@ -194,5 +251,64 @@ export default function TransactionsTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+/**
+ * Célula da coluna "Descrição" no modo editável. Grava por PATCH ao sair do
+ * campo (ou no Enter, que só tira o foco e cai no mesmo caminho), no mesmo
+ * padrão da coluna "Descrição" de /investimentos — não há botão de salvar
+ * porque o campo é texto livre, sem validação para reportar.
+ *
+ * O texto em edição vive em estado LOCAL, e não no `transaction` recebido: cada
+ * gravação substitui a linha pela resposta do servidor, e ler do dado da página
+ * faria essa resposta apagar o que está sendo digitado.
+ *
+ * Descrição em branco é REVERTIDA para a original, não gravada: a rota exige
+ * `z.string().min(1)`, então devolver o texto anterior é mais honesto do que
+ * mandar um valor que já se sabe que a API vai recusar. Gravar só quando o
+ * texto realmente mudou também evita um PATCH a cada clique fora do campo.
+ *
+ * Renomear NÃO re-sugere categoria — a sugestão por `Category.keywords`
+ * acontece na importação, e daí em diante a categoria é escolha explícita
+ * (mesma postura da renomeação na revisão de fatura).
+ */
+function DescriptionCell({
+  transaction,
+  pending,
+  onSave,
+}: {
+  transaction: Transaction;
+  pending: boolean;
+  onSave: (transactionId: string, description: string) => void;
+}) {
+  const [value, setValue] = useState(transaction.description);
+
+  /** Grava a descrição digitada, se ela for válida e diferente da atual. */
+  function save() {
+    const next = value.trim();
+    if (next === "") {
+      setValue(transaction.description);
+      return;
+    }
+    if (next === transaction.description) return;
+    setValue(next);
+    onSave(transaction.id, next);
+  }
+
+  return (
+    <input
+      type="text"
+      value={value}
+      aria-label={`Descrição de ${transaction.description}`}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={save}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") e.currentTarget.blur();
+      }}
+      className={`flex-1 min-w-0 bg-transparent border border-transparent hover:border-slate-200 focus:border-indigo-500 dark:hover:border-slate-600 rounded px-1.5 py-1 text-sm outline-none ${
+        pending ? "text-red-700 dark:text-red-400" : "text-slate-900 dark:text-slate-100"
+      }`}
+    />
   );
 }

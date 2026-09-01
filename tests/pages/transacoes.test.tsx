@@ -6,6 +6,8 @@ vi.mock("@/components/TransactionsTable", () => ({
   default: ({
     transactions,
     onCategoryChange,
+    onDateChange,
+    onDescriptionChange,
     onDelete,
     onPendingReturnChange,
     onMoveToFamily,
@@ -14,11 +16,20 @@ vi.mock("@/components/TransactionsTable", () => ({
       <span>{transactions.length} transações</span>
       {transactions.map((t: any) => (
         <span key={t.id} data-testid={`tx-${t.id}`}>
-          {t.id}:{String(t.pendingReturn)}
+          {t.id}:{String(t.pendingReturn)}:{t.description}:{t.date}
         </span>
       ))}
       <button type="button" onClick={() => onCategoryChange("tx-1", "cat-2")}>
         trocar categoria
+      </button>
+      <button type="button" onClick={() => onDateChange("tx-1", "2026-08-05")}>
+        trocar data
+      </button>
+      <button type="button" onClick={() => onDateChange("tx-1", "2026-09-02")}>
+        trocar data p/ setembro
+      </button>
+      <button type="button" onClick={() => onDescriptionChange("tx-1", "Feira do mês")}>
+        trocar descrição
       </button>
       <button type="button" onClick={() => onDelete("tx-1")}>
         excluir transação
@@ -44,8 +55,31 @@ const categorias = [
   { id: "cat-2", name: "Salário", color: "#16a34a", icon: "wallet", kind: "INCOME", keywords: [] },
 ];
 
-function comDados(transacoes: unknown[] = [{ id: "tx-1", pendingReturn: false }]) {
+/**
+ * Transação de exemplo com os campos que a tela lê para decidir se a linha
+ * editada continua na lista (data, descrição, categoria, tipo).
+ */
+function tx(over: Record<string, unknown> = {}) {
+  return {
+    id: "tx-1",
+    date: "2026-08-15",
+    description: "SUPERMERCADO BH",
+    type: "EXPENSE",
+    categoryId: "cat-1",
+    pendingReturn: false,
+    ...over,
+  };
+}
+
+function comDados(transacoes: any[] = [tx()]) {
   fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+    // O PATCH devolve a transação já atualizada (é o que a rota faz), porque é
+    // dela que a tela monta a linha nova — sem recarregar a lista.
+    if (init?.method === "PATCH") {
+      const id = String(url).split("/").pop();
+      const base = transacoes.find((t) => t.id === id) ?? {};
+      return { ok: true, json: async () => ({ ...base, ...JSON.parse(String(init.body)) }) };
+    }
     if (init?.method) return { ok: true, json: async () => ({ ok: true }) };
     if (url === "/api/categories") return { json: async () => categorias };
     return { json: async () => transacoes };
@@ -181,11 +215,24 @@ describe("página /transacoes — listagem e filtros", () => {
 });
 
 describe("página /transacoes — ações na tabela", () => {
-  it("trocar a categoria salva e recarrega", async () => {
+  /** Quantidade de listagens (GET) já pedidas ao servidor. */
+  function listagens(): number {
+    return fetchMock.mock.calls.filter(
+      (c) => String(c[0]).startsWith("/api/transactions?") && !c[1]?.method,
+    ).length;
+  }
+
+  /** Ids das linhas na ordem em que a tabela as recebeu. */
+  function idsNaOrdem(): string[] {
+    return screen.getAllByTestId(/^tx-tx-/).map((el) => el.textContent!.split(":")[0]);
+  }
+
+  it("trocar a categoria salva sem recarregar a lista", async () => {
     comDados();
 
     render(<TransacoesPage />);
     await waitFor(() => screen.getByTestId("tabela"));
+    const antes = listagens();
 
     fireEvent.click(screen.getByRole("button", { name: "trocar categoria" }));
 
@@ -196,6 +243,78 @@ describe("página /transacoes — ações na tabela", () => {
         body: JSON.stringify({ categoryId: "cat-2" }),
       }),
     );
+    // A linha é atualizada no lugar: recarregar trocaria a tabela inteira por
+    // "Carregando...", fechando o detalhamento aberto e o campo em edição.
+    expect(listagens()).toBe(antes);
+    expect(screen.getByTestId("tx-tx-1")).toBeInTheDocument();
+  });
+
+  it("editar a descrição atualiza a linha com a resposta do servidor", async () => {
+    comDados();
+
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    const antes = listagens();
+
+    fireEvent.click(screen.getByRole("button", { name: "trocar descrição" }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("tx-tx-1")).toHaveTextContent("Feira do mês"),
+    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/transactions/tx-1", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ description: "Feira do mês" }),
+    });
+    expect(listagens()).toBe(antes);
+  });
+
+  it("editar a data dentro do período reordena a lista sem recarregar", async () => {
+    comDados([tx(), tx({ id: "tx-2", date: "2026-08-10", description: "PADARIA" })]);
+
+    render(<TransacoesPage />);
+    await waitFor(() => expect(idsNaOrdem()).toEqual(["tx-1", "tx-2"]));
+    const antes = listagens();
+
+    // 05/08 é anterior ao 10/08 da outra linha: a tabela é ordenada da mais
+    // recente para a mais antiga, como o orderBy da rota.
+    fireEvent.click(screen.getByRole("button", { name: "trocar data" }));
+
+    await waitFor(() => expect(idsNaOrdem()).toEqual(["tx-2", "tx-1"]));
+    expect(screen.getByTestId("tx-tx-1")).toHaveTextContent("2026-08-05");
+    expect(listagens()).toBe(antes);
+  });
+
+  it("data fora do período filtrado tira a linha da lista", async () => {
+    comDados([tx(), tx({ id: "tx-2", date: "2026-08-10", description: "PADARIA" })]);
+
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tx-tx-1"));
+
+    // O filtro é o mês corrente (agosto/2026): setembro não pertence mais à
+    // lista, então a linha sai — o mesmo resultado que o recarregamento dava.
+    fireEvent.click(screen.getByRole("button", { name: "trocar data p/ setembro" }));
+
+    await waitFor(() => expect(screen.queryByTestId("tx-tx-1")).not.toBeInTheDocument());
+    expect(screen.getByTestId("tx-tx-2")).toBeInTheDocument();
+  });
+
+  it("PATCH que falha não altera a linha", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "PATCH") return { ok: false, status: 400, json: async () => ({ error: "x" }) };
+      if (url === "/api/categories") return { json: async () => categorias };
+      return { json: async () => [tx()] };
+    });
+
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.click(screen.getByRole("button", { name: "trocar descrição" }));
+
+    // O corpo de uma resposta fora de 2xx é um objeto de erro, não a transação:
+    // aplicá-lo apagaria a linha da tela. O pop-up global já explica a falha.
+    await waitFor(() => expect(fetchMock.mock.calls.some((c) => c[1]?.method === "PATCH")).toBe(true));
+    expect(screen.getByTestId("tx-tx-1")).toHaveTextContent("SUPERMERCADO BH");
   });
 
   it("excluir pede confirmação antes", async () => {

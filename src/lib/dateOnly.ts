@@ -52,3 +52,19 @@ export function formatLocalDate(date: Date): string {
   const dia = String(date.getDate()).padStart(2, "0");
   return `${date.getFullYear()}-${mes}-${dia}`;
 }
+
+/**
+ * Converte a data de uma transação para o valor que um `<input type="date">`
+ * espera ("YYYY-MM-DD"). O dado chega da API nos dois formatos: ISO completo
+ * ("2026-08-15T03:00:00.000Z", que é como o Prisma serializa a coluna) ou já
+ * como data pura, dependendo de quem montou a resposta.
+ *
+ * A string curta é devolvida como está — já é o formato do input, e passá-la
+ * por `new Date` só abriria a porta para o bug de fuso descrito no topo deste
+ * arquivo. A ISO completa é lida no calendário LOCAL (`formatLocalDate`), e
+ * não com `slice(0, 10)`: a meia-noite local gravada num fuso à frente de UTC
+ * sai como o dia ANTERIOR na parte UTC da string.
+ */
+export function toDateInputValue(date: string): string {
+  return date.length === 10 ? date : formatLocalDate(new Date(date));
+}

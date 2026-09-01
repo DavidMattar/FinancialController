@@ -20,6 +20,13 @@ interface Item {
 
 interface Props {
   transactionId: string;
+  // Categoria da transação. Não é usada na tela: serve para o painel recarregar
+  // quando ela muda, porque a categoria nova pode ter criado sub-itens fixos no
+  // servidor (`ensureFixedSubItems`, ex.: "Viagem"). Antes a troca de categoria
+  // recarregava a lista toda e fechava o painel, então a próxima abertura já
+  // vinha com eles; agora a linha é atualizada no lugar e o painel continua
+  // aberto.
+  categoryId?: string | null;
   transactionAmount: number;
   description: string;
   hasCreditCard: boolean;
@@ -29,6 +36,7 @@ interface Props {
 
 export default function TransactionItemsPanel({
   transactionId,
+  categoryId,
   transactionAmount,
   description: transactionDescription,
   hasCreditCard,
@@ -56,11 +64,12 @@ export default function TransactionItemsPanel({
   }
 
   // Recarrega os itens sempre que o painel é aberto para uma transação diferente
-  // (o mesmo componente é reaproveitado ao trocar qual linha está expandida).
+  // (o mesmo componente é reaproveitado ao trocar qual linha está expandida) e
+  // também quando a categoria da transação muda, pelo motivo explicado em Props.
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transactionId]);
+  }, [transactionId, categoryId]);
 
   /**
    * Envia o formulário de novo item: cria o item via API e limpa os campos.

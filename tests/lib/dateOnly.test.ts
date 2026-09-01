@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { addDays, formatLocalDate, parseLocalDate, parseLocalDateEndOfDay } from "@/lib/dateOnly";
+import {
+  addDays,
+  formatLocalDate,
+  parseLocalDate,
+  parseLocalDateEndOfDay,
+  toDateInputValue,
+} from "@/lib/dateOnly";
 
 /**
  * Estas funções existem para evitar UM bug específico: `new Date("2026-07-06")`
@@ -132,5 +138,28 @@ describe("formatLocalDate", () => {
     // 31/12 às 22h no Brasil (UTC-3) já é 01/01 em UTC: `toISOString()`
     // devolveria o ano seguinte.
     expect(formatLocalDate(new Date(2026, 11, 31, 22, 0))).toBe("2026-12-31");
+  });
+});
+
+describe("toDateInputValue", () => {
+  it("devolve a data pura como está", () => {
+    expect(toDateInputValue("2026-08-15")).toBe("2026-08-15");
+  });
+
+  it("corta o horário de um ISO completo pelo calendário local", () => {
+    // Meia-noite de 15/08 no Brasil (UTC-3) é gravada como 03:00 em UTC — é
+    // assim que a data de uma transação chega da API.
+    expect(toDateInputValue("2026-08-15T03:00:00.000Z")).toBe("2026-08-15");
+  });
+
+  it("usa o dia LOCAL do ISO, e não o dia escrito na parte UTC", () => {
+    // 01/09 às 00:00Z ainda é 31/08 às 21h no Brasil: um slice(0, 10) devolveria
+    // setembro para uma transação que a tela mostra em agosto.
+    expect(toDateInputValue("2026-09-01T00:00:00.000Z")).toBe("2026-08-31");
+  });
+
+  it("é o caminho de ida do valor que parseLocalDate lê de volta", () => {
+    const valor = toDateInputValue("2026-02-28T03:00:00.000Z");
+    expect(formatLocalDate(parseLocalDate(valor))).toBe("2026-02-28");
   });
 });

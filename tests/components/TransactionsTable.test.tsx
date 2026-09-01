@@ -10,8 +10,10 @@ import type { Category, Transaction } from "@/lib/types";
  * linha certa. Sem o dublê, cada expansão dispararia fetch do painel real.
  */
 vi.mock("@/components/TransactionItemsPanel", () => ({
-  default: ({ transactionId }: { transactionId: string }) => (
-    <div data-testid="painel-itens">detalhamento de {transactionId}</div>
+  default: ({ transactionId, categoryId }: { transactionId: string; categoryId: string | null }) => (
+    <div data-testid="painel-itens">
+      detalhamento de {transactionId} (categoria {String(categoryId)})
+    </div>
   ),
 }));
 
@@ -411,5 +413,268 @@ describe("TransactionsTable — detalhamento expansível", () => {
     expect(screen.getByText("›").className).not.toContain("rotate-90");
     fireEvent.click(screen.getByText("SUPERMERCADO BH"));
     expect(screen.getByText("›").className).toContain("rotate-90");
+  });
+});
+
+describe("TransactionsTable — data editável", () => {
+  it("mostra a data formatada, e não um campo, quando onDateChange não é informado", () => {
+    render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
+
+    expect(screen.getByText("15/08/2026")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Data de SUPERMERCADO BH")).not.toBeInTheDocument();
+  });
+
+  it("mostra um input de data preenchido quando onDateChange é informado", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDateChange={vi.fn()}
+      />,
+    );
+
+    const campo = screen.getByLabelText("Data de SUPERMERCADO BH") as HTMLInputElement;
+    expect(campo.type).toBe("date");
+    expect(campo.value).toBe("2026-08-15");
+  });
+
+  it("preenche o campo pelo dia LOCAL quando a data vem como ISO completo", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao({ date: "2026-08-15T03:00:00.000Z" })]}
+        categories={categorias}
+        onDateChange={vi.fn()}
+      />,
+    );
+
+    expect((screen.getByLabelText("Data de SUPERMERCADO BH") as HTMLInputElement).value).toBe(
+      "2026-08-15",
+    );
+  });
+
+  it("avisa a nova data no formato que a rota espera", () => {
+    const onDateChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDateChange={onDateChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Data de SUPERMERCADO BH"), {
+      target: { value: "2026-09-02" },
+    });
+
+    expect(onDateChange).toHaveBeenCalledWith("tx-1", "2026-09-02");
+  });
+
+  it("apagar a data não grava nada (a transação precisa de uma data)", () => {
+    const onDateChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDateChange={onDateChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Data de SUPERMERCADO BH"), { target: { value: "" } });
+
+    expect(onDateChange).not.toHaveBeenCalled();
+  });
+
+  it("cada linha edita a sua própria data", () => {
+    const onDateChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao(), transacao({ id: "tx-2", description: "PADARIA" })]}
+        categories={categorias}
+        onDateChange={onDateChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Data de PADARIA"), {
+      target: { value: "2026-08-20" },
+    });
+
+    expect(onDateChange).toHaveBeenCalledWith("tx-2", "2026-08-20");
+  });
+});
+
+describe("TransactionsTable — descrição editável", () => {
+  /** Renderiza a tabela com a descrição editável e devolve o campo e o espião. */
+  function comDescricaoEditavel(over = {}) {
+    const onDescriptionChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao(over)]}
+        categories={categorias}
+        onDescriptionChange={onDescriptionChange}
+      />,
+    );
+    const campo = screen.getByLabelText("Descrição de SUPERMERCADO BH") as HTMLInputElement;
+    return { campo, onDescriptionChange };
+  }
+
+  it("mostra um campo de texto preenchido com a descrição atual", () => {
+    const { campo } = comDescricaoEditavel();
+
+    expect(campo.type).toBe("text");
+    expect(campo.value).toBe("SUPERMERCADO BH");
+  });
+
+  it("sem onDescriptionChange a descrição é só texto", () => {
+    render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
+
+    expect(screen.queryByLabelText("Descrição de SUPERMERCADO BH")).not.toBeInTheDocument();
+    expect(screen.getByText("SUPERMERCADO BH")).toBeInTheDocument();
+  });
+
+  it("grava ao sair do campo", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "Supermercado BH — feira" } });
+    fireEvent.blur(campo);
+
+    expect(onDescriptionChange).toHaveBeenCalledWith("tx-1", "Supermercado BH — feira");
+  });
+
+  it("Enter tira o foco e cai no mesmo caminho de gravação", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    // O blur() do jsdom só dispara o evento se o campo estiver realmente
+    // focado — sem o focus() aqui o teste passaria sem exercitar nada.
+    campo.focus();
+    fireEvent.change(campo, { target: { value: "Padaria da esquina" } });
+    fireEvent.keyDown(campo, { key: "Enter" });
+
+    expect(onDescriptionChange).toHaveBeenCalledWith("tx-1", "Padaria da esquina");
+  });
+
+  it("outra tecla não grava (só Enter tira o foco)", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "Padaria" } });
+    fireEvent.keyDown(campo, { key: "a" });
+
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it("digitar não grava nada antes de sair do campo", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "SUPERMERCADO B" } });
+
+    expect(campo.value).toBe("SUPERMERCADO B");
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it("sair do campo sem mudar nada não grava", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.blur(campo);
+
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it("espaço em volta é aparado antes de gravar", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "  Feira do mês  " } });
+    fireEvent.blur(campo);
+
+    expect(onDescriptionChange).toHaveBeenCalledWith("tx-1", "Feira do mês");
+    expect(campo.value).toBe("Feira do mês");
+  });
+
+  it("texto que só ganhou espaço em volta não vira gravação", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "  SUPERMERCADO BH  " } });
+    fireEvent.blur(campo);
+
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+  });
+
+  it("descrição em branco volta para a original em vez de ser gravada", () => {
+    const { campo, onDescriptionChange } = comDescricaoEditavel();
+
+    fireEvent.change(campo, { target: { value: "   " } });
+    fireEvent.blur(campo);
+
+    expect(onDescriptionChange).not.toHaveBeenCalled();
+    expect(campo.value).toBe("SUPERMERCADO BH");
+  });
+
+  it("a linha continua expansível pela seta", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao()]}
+        categories={categorias}
+        onDescriptionChange={vi.fn()}
+      />,
+    );
+
+    const seta = screen.getByRole("button", { name: "Ver detalhamento de SUPERMERCADO BH" });
+    expect(seta.className).not.toContain("rotate-90");
+
+    fireEvent.click(seta);
+
+    expect(screen.getByTestId("painel-itens")).toHaveTextContent("detalhamento de tx-1");
+    expect(seta.className).toContain("rotate-90");
+
+    fireEvent.click(seta);
+    expect(screen.queryByTestId("painel-itens")).not.toBeInTheDocument();
+  });
+
+  it("marcador de pendência e número de parcela continuam visíveis no modo editável", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao({ pendingReturn: true, installmentCurrent: 2, installmentTotal: 10 })]}
+        categories={categorias}
+        onDescriptionChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTitle("Pendente de devolução")).toBeInTheDocument();
+    expect(screen.getByText("(2/10)")).toBeInTheDocument();
+  });
+
+  it("sem parcela completa, nada de parcela aparece no modo editável", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao({ installmentCurrent: 2, installmentTotal: null })]}
+        categories={categorias}
+        onDescriptionChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText(/\(2\//)).not.toBeInTheDocument();
+  });
+});
+
+describe("TransactionsTable — categoria repassada ao detalhamento", () => {
+  // O painel recarrega os itens quando a categoria muda, porque a categoria
+  // nova pode ter criado sub-itens fixos no servidor.
+  it("repassa a categoria da transação", () => {
+    render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
+
+    fireEvent.click(screen.getByText("SUPERMERCADO BH"));
+
+    expect(screen.getByTestId("painel-itens")).toHaveTextContent("categoria cat-1");
+  });
+
+  it("transação sem categoria repassa null", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao({ categoryId: null, category: null })]}
+        categories={categorias}
+      />,
+    );
+
+    fireEvent.click(screen.getByText("SUPERMERCADO BH"));
+
+    expect(screen.getByTestId("painel-itens")).toHaveTextContent("categoria null");
   });
 });

@@ -39,6 +39,32 @@ afterEach(() => {
 });
 
 describe("TransactionItemsPanel — listagem", () => {
+  it("recarrega os itens quando a categoria da transação muda", async () => {
+    // A categoria nova pode ter criado sub-itens fixos no servidor
+    // (ensureFixedSubItems). O painel fica aberto durante a troca — a lista da
+    // página é atualizada no lugar —, então quem tem de buscar de novo é ele.
+    comItens([], [{ id: "i1", description: "Comida", amount: "0" }]);
+
+    const { rerender } = render(<TransactionItemsPanel {...props} categoryId="cat-1" />);
+    await waitFor(() => screen.getByText("Nenhum item adicionado ainda."));
+
+    rerender(<TransactionItemsPanel {...props} categoryId="cat-viagem" />);
+
+    await waitFor(() => expect(screen.getByText("Comida")).toBeInTheDocument());
+  });
+
+  it("não recarrega quando a categoria continua a mesma", async () => {
+    comItens([]);
+
+    const { rerender } = render(<TransactionItemsPanel {...props} categoryId="cat-1" />);
+    await waitFor(() => screen.getByText("Nenhum item adicionado ainda."));
+    const antes = fetchMock.mock.calls.length;
+
+    rerender(<TransactionItemsPanel {...props} categoryId="cat-1" transactionAmount={200} />);
+
+    expect(fetchMock.mock.calls.length).toBe(antes);
+  });
+
   it("avisa que o detalhamento é apenas visual", async () => {
     comItens([]);
     render(<TransactionItemsPanel {...props} />);

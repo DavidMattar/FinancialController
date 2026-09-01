@@ -573,6 +573,70 @@ mostra a interpretação e o usuário corrige antes de salvar.
   lista já mostra lado a lado o valor da tabela e o valor aplicado por noite,
   então a interpretação já está visível, e um eco por linha dobraria a altura.
 
+### 4.12. Edição inline de data e descrição em `/transacoes`
+
+Na aba de Transações a coluna **Data** é um `<input type="date">` e a coluna
+**Descrição** é um campo de texto, editáveis direto na linha — mesmo padrão que
+a coluna de categoria já usava ali e que a coluna "Descrição" de
+`/investimentos` usa (seção 4.7). Nenhuma rota nova: as três edições são o
+MESMO `PATCH /api/transactions/[id]`, que já aceitava `date` e `description`.
+
+- **Só `/transacoes` edita.** `TransactionsTable` libera cada coluna por um
+  callback próprio (`onDateChange`, `onDescriptionChange`), como já fazia com
+  `onCategoryChange` e `onDelete`: no dashboard e em `/receitas` a tabela
+  continua somente de leitura porque essas telas não passam os callbacks.
+- **A data grava na hora da mudança**, sem estado intermediário: o
+  `<input type="date">` só dispara `onChange` com uma data completa. Campo
+  **limpo é ignorado** — a transação precisa de uma data, e apagar não é uma
+  edição válida.
+- **A descrição grava ao sair do campo (ou no Enter, que só tira o foco).** O
+  texto em edição vive em estado LOCAL da célula, não no `data` da página: cada
+  gravação substitui a linha pela resposta do servidor, e ler dali faria essa
+  resposta (ou uma listagem em trânsito) apagar o que está sendo digitado —
+  mesmo motivo da nota de `/investimentos`.
+  - Texto **em branco é revertido para o original, não gravado**: a rota exige
+    `z.string().min(1)`, então devolver o texto anterior é melhor do que mandar
+    um valor que já se sabe que a API vai recusar. Espaço em volta é aparado, e
+    texto que não mudou não gera PATCH.
+  - **Renomear não re-sugere categoria**, mesma postura da renomeação na revisão
+    de fatura (seção 4.5): a sugestão por `Category.keywords` acontece na
+    importação, e daí em diante a categoria é escolha explícita.
+- **No modo editável a seta `›` passa a ser o alvo de clique para expandir** o
+  detalhamento. Antes o clique era em toda a descrição; com um campo de texto no
+  lugar, clicar no texto posiciona o cursor — fechar a linha nesse clique seria
+  irritante. No modo somente leitura o comportamento é o de antes.
+- **Gravar atualiza SÓ A LINHA editada — não recarrega a lista.** Recarregar
+  (o que as três edições faziam até 2026-09-01) liga o `loading` da página e
+  troca a tabela inteira por "Carregando...", o que fecha o detalhamento aberto
+  e remonta o campo que está sendo editado: barulho visual a cada Enter.
+  - A linha nova vem da **resposta do PATCH**, e não do que foi enviado, porque
+    a rota pode mudar mais do que se pediu — categoria de receita força
+    `type: INCOME` (seção 4.4) — e a resposta já traz `category` e `creditCard`
+    populados, no mesmo formato da listagem.
+  - Resposta **fora de 2xx não aplica nada**: o corpo é um objeto de erro, não a
+    transação, e aplicá-lo apagaria os dados da linha na tela. A falha em si não
+    fica escondida — o pop-up global cobre qualquer fetch (seção 4.10).
+  - **A linha sai da lista quando deixa de casar com os filtros ativos** (data
+    fora do período, categoria ou tipo filtrados, busca por texto) — o mesmo
+    resultado que o recarregamento dava. Quem decide isso é
+    `matchesTransactionFilters` (`src/lib/transactionFilters.ts`), o **espelho no
+    navegador do `where` de `GET /api/transactions`**: mudar o filtro da rota sem
+    mudar esse arquivo faria a tela discordar da próxima listagem (mesma postura
+    do `perRentalValue` do `SettlementModal`, seção 4.2).
+  - A lista é **reordenada por data** (`sortTransactionsByDateDesc`, espelho do
+    `orderBy: { date: "desc" }`), senão a linha com data editada ficaria fora de
+    lugar até o próximo recarregamento. O `sort` é estável, então transações do
+    mesmo dia não trocam de posição.
+  - O `TransactionItemsPanel` recebe `categoryId` e **recarrega os itens quando
+    ela muda**: a categoria nova pode ter criado sub-itens fixos no servidor
+    (`ensureFixedSubItems`, seção 4.3). Antes o recarregamento da lista fechava o
+    painel e a próxima abertura já vinha com eles; com a linha atualizada no
+    lugar, o painel continua aberto e precisa buscar de novo por conta própria.
+- `toDateInputValue()` (`dateOnly.ts`) é o caminho do dado do banco para o
+  campo: a data chega como ISO completo e é lida no calendário **local**, nunca
+  por `slice(0, 10)` — a meia-noite local gravada num fuso à frente de UTC sai
+  como o dia anterior na parte UTC da string (armadilha 2 da seção 5).
+
 ## 5. Convenções e armadilhas técnicas (ver detalhe completo em `instaladorParaIA.md` seção 5)
 
 Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
@@ -785,6 +849,7 @@ src/lib/
   types.ts, format.ts                     → tipos e formatação compartilhados
   dateRanges.ts                           → presets de período (este mês, últimos 3 meses, etc.)
   categorize.ts                           → auto-categorização por keywords
+  transactionFilters.ts                   → espelho no navegador do where/orderBy de GET /api/transactions (seção 4.12)
   ecommerceMerchants.ts                   → detecção de comerciante e-commerce (pendingReturn)
   transactionItems.ts                     → ensureFixedSubItems() (sub-itens automáticos)
   invoices.ts                             → helpers de fatura (fora do parser em si)

@@ -12,6 +12,11 @@ import ConfirmDialog from "@/components/ConfirmDialog";
 import DateRangePicker from "@/components/DateRangePicker";
 import TransactionsTable from "@/components/TransactionsTable";
 import { currentMonthRange, type DateRange } from "@/lib/dateRanges";
+import {
+  matchesTransactionFilters,
+  sortTransactionsByDateDesc,
+  type TransactionFilters,
+} from "@/lib/transactionFilters";
 import type { Category, Transaction } from "@/lib/types";
 import { parseDecimalInput } from "@/lib/decimalInput";
 import ParsedValueHint from "@/components/ParsedValueHint";
@@ -36,6 +41,10 @@ export default function TransacoesPage() {
       .then(setCategories);
   }, []);
 
+  // Os filtros ativos reunidos no formato que `matchesTransactionFilters` usa —
+  // é com eles que a tela decide se uma transação editada continua na lista.
+  const filters: TransactionFilters = { from: range.from, to: range.to, categoryId, type, query };
+
   /** Busca as transações no servidor aplicando todos os filtros ativos (período, categoria, tipo, texto). */
   async function load() {
     setLoading(true);
@@ -54,14 +63,41 @@ export default function TransacoesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [range, categoryId, type, query]);
 
-  /** Troca a categoria de uma transação (usado pelo select de categoria dentro da tabela) e recarrega a lista. */
-  async function handleCategoryChange(id: string, newCategoryId: string | null) {
-    await fetch(`/api/transactions/${id}`, {
+  /**
+   * Grava um campo editado direto na tabela. As três edições inline (categoria,
+   * data e descrição) são o MESMO PATCH com uma chave diferente, então o corpo
+   * já chega montado por quem chamou.
+   *
+   * **Atualiza só a linha editada, sem recarregar a lista.** Recarregar troca a
+   * tabela inteira por "Carregando...", o que fecha o detalhamento aberto e
+   * remonta o campo que está sendo editado — barulho visual a cada tecla de
+   * Enter. A linha nova vem da RESPOSTA do PATCH, e não do que foi enviado,
+   * porque a rota pode mudar mais do que se pediu: categoria de receita força
+   * `type: INCOME` (seção 4.4 do contexto.md) e a resposta já traz categoria e
+   * cartão populados, do mesmo jeito que a listagem.
+   *
+   * Se a transação atualizada não casa mais com os filtros ativos (data fora do
+   * período, categoria ou tipo filtrados, busca por texto), ela sai da lista —
+   * o mesmo resultado que o recarregamento dava. E a lista é reordenada por
+   * data, porque editar a data muda o lugar da linha na tabela.
+   *
+   * Resposta fora de 2xx não aplica nada: o corpo é um objeto de erro, não a
+   * transação, e o pop-up global já explica a falha (ver src/lib/logClient.ts).
+   */
+  async function patchTransaction(id: string, data: Record<string, unknown>) {
+    const res = await fetch(`/api/transactions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ categoryId: newCategoryId }),
+      body: JSON.stringify(data),
     });
-    load();
+    if (!res.ok) return;
+    const updated: Transaction = await res.json();
+    setTransactions((prev) => {
+      if (!matchesTransactionFilters(updated, filters)) {
+        return prev.filter((t) => t.id !== updated.id);
+      }
+      return sortTransactionsByDateDesc(prev.map((t) => (t.id === updated.id ? updated : t)));
+    });
   }
 
   /** Exclui uma transação, pedindo confirmação nativa do navegador antes. */
@@ -181,7 +217,9 @@ export default function TransacoesPage() {
           <TransactionsTable
             transactions={transactions}
             categories={categories}
-            onCategoryChange={handleCategoryChange}
+            onCategoryChange={(id, newCategoryId) => patchTransaction(id, { categoryId: newCategoryId })}
+            onDateChange={(id, date) => patchTransaction(id, { date })}
+            onDescriptionChange={(id, description) => patchTransaction(id, { description })}
             onDelete={handleDelete}
             onPendingReturnChange={handlePendingReturnChange}
             onMoveToFamily={setToMove}
