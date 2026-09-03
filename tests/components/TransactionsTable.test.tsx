@@ -678,3 +678,262 @@ describe("TransactionsTable — categoria repassada ao detalhamento", () => {
     expect(screen.getByTestId("painel-itens")).toHaveTextContent("categoria null");
   });
 });
+
+describe("TransactionsTable — valor editável", () => {
+  /** Renderiza a tabela com o valor editável e devolve o campo e o espião. */
+  function comValorEditavel(over = {}) {
+    const onAmountChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao(over)]}
+        categories={categorias}
+        onAmountChange={onAmountChange}
+      />,
+    );
+    const campo = screen.getByLabelText("Valor de SUPERMERCADO BH") as HTMLInputElement;
+    return { campo, onAmountChange };
+  }
+
+  it("mostra o valor formatado, e não um campo, quando onAmountChange não é informado", () => {
+    render(<TransactionsTable transactions={[transacao()]} categories={categorias} />);
+
+    expect(norm(screen.getByText(norm("R$ 150,00")).textContent)).toBe(norm("R$ 150,00"));
+    expect(screen.queryByLabelText("Valor de SUPERMERCADO BH")).not.toBeInTheDocument();
+  });
+
+  it("mostra o valor no padrão brasileiro e sem o prefixo de moeda", () => {
+    // O "R$ " sairia na frente do cursor num campo feito para digitar.
+    const { campo } = comValorEditavel({ amount: "1234.50" });
+
+    expect(campo.value).toBe("1.234,50");
+    expect(campo.getAttribute("inputMode")).toBe("decimal");
+    expect(campo.type).toBe("text");
+  });
+
+  it("grava o novo valor ao sair do campo", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "200,50" } });
+    fireEvent.blur(campo);
+
+    // Chega como NÚMERO: a célula converte o texto antes de repassar.
+    expect(onAmountChange).toHaveBeenCalledWith("tx-1", 200.5);
+  });
+
+  it("aceita vírgula e ponto como o mesmo separador decimal", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "200.50" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).toHaveBeenCalledWith("tx-1", 200.5);
+  });
+
+  it("lê o separador de milhar junto com o decimal", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "1.234,56" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).toHaveBeenCalledWith("tx-1", 1234.56);
+  });
+
+  it("Enter tira o foco e grava (sem botão de salvar)", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "300" } });
+    fireEvent.keyDown(campo, { key: "Enter" });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).toHaveBeenCalledWith("tx-1", 300);
+  });
+
+  it("mostra no campo o valor que ENTENDEU depois de gravar", () => {
+    // "1.000" é ambíguo de verdade e a regra do app lê um separador sozinho
+    // como decimal. Em vez de um eco embaixo da linha (que dobraria a altura
+    // da tabela), a própria célula passa a mostrar o número interpretado.
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "1.000" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).toHaveBeenCalledWith("tx-1", 1);
+    expect(campo.value).toBe("1,00");
+  });
+
+  it("texto ilegível é revertido para o valor atual, sem gravar", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "12abc" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).not.toHaveBeenCalled();
+    expect(campo.value).toBe("150,00");
+  });
+
+  it("campo vazio é revertido para o valor atual, sem gravar", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).not.toHaveBeenCalled();
+    expect(campo.value).toBe("150,00");
+  });
+
+  it("valor zero ou negativo é revertido, sem gravar (a rota exige positivo)", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "0" } });
+    fireEvent.blur(campo);
+    expect(onAmountChange).not.toHaveBeenCalled();
+
+    fireEvent.change(campo, { target: { value: "-10" } });
+    fireEvent.blur(campo);
+    expect(onAmountChange).not.toHaveBeenCalled();
+    expect(campo.value).toBe("150,00");
+  });
+
+  it("valor que não mudou não gera gravação", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.blur(campo);
+    expect(onAmountChange).not.toHaveBeenCalled();
+
+    // Mesmo número escrito de outro jeito também não é mudança.
+    fireEvent.change(campo, { target: { value: "150" } });
+    fireEvent.blur(campo);
+    expect(onAmountChange).not.toHaveBeenCalled();
+  });
+
+  it("outra tecla não grava nada (só o Enter tira o foco)", () => {
+    const { campo, onAmountChange } = comValorEditavel();
+
+    fireEvent.change(campo, { target: { value: "200" } });
+    fireEvent.keyDown(campo, { key: "a" });
+
+    expect(onAmountChange).not.toHaveBeenCalled();
+    expect(campo.value).toBe("200");
+  });
+
+  it("cada linha edita o seu próprio valor", () => {
+    const onAmountChange = vi.fn();
+    render(
+      <TransactionsTable
+        transactions={[transacao(), transacao({ id: "tx-2", description: "PADARIA", amount: "30.00" })]}
+        categories={categorias}
+        onAmountChange={onAmountChange}
+      />,
+    );
+
+    const campo = screen.getByLabelText("Valor de PADARIA") as HTMLInputElement;
+    expect(campo.value).toBe("30,00");
+    fireEvent.change(campo, { target: { value: "45" } });
+    fireEvent.blur(campo);
+
+    expect(onAmountChange).toHaveBeenCalledWith("tx-2", 45);
+  });
+});
+
+describe("TransactionsTable — edição bloqueada por linha (isRowEditable)", () => {
+  const receitaDeAluguel = transacao({
+    id: "tx-aluguel",
+    description: "Repasse aluguel",
+    type: "INCOME",
+    amount: "1000.00",
+    category: { ...categorias[1], name: "Aluguel Rancho" },
+  });
+
+  /** Só a transação de aluguel é bloqueada; a outra continua editável. */
+  const gate = (t: Transaction) => t.category?.name !== "Aluguel Rancho";
+
+  function comGate() {
+    const espioes = {
+      onCategoryChange: vi.fn(),
+      onDateChange: vi.fn(),
+      onDescriptionChange: vi.fn(),
+      onAmountChange: vi.fn(),
+      onDelete: vi.fn(),
+    };
+    render(
+      <TransactionsTable
+        transactions={[transacao(), receitaDeAluguel]}
+        categories={categorias}
+        isRowEditable={gate}
+        {...espioes}
+      />,
+    );
+    return espioes;
+  }
+
+  it("a linha bloqueada mostra data, descrição e valor só de leitura", () => {
+    comGate();
+
+    expect(screen.queryByLabelText("Data de Repasse aluguel")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Descrição de Repasse aluguel")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Valor de Repasse aluguel")).not.toBeInTheDocument();
+    expect(screen.getByText("15/08/2026")).toBeInTheDocument();
+    expect(norm(document.body.textContent)).toContain(norm("R$ 1.000,00"));
+  });
+
+  it("a linha bloqueada mostra a categoria como etiqueta, sem select", () => {
+    comGate();
+
+    // Só a linha liberada tem select de categoria.
+    expect(screen.getAllByRole("combobox")).toHaveLength(1);
+    expect(screen.getByText("Aluguel Rancho")).toBeInTheDocument();
+  });
+
+  it("a linha bloqueada não tem botão de excluir (mas a coluna continua)", () => {
+    comGate();
+
+    expect(screen.getAllByRole("button", { name: "excluir" })).toHaveLength(1);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(7);
+  });
+
+  it("a linha liberada continua editando tudo", () => {
+    const espioes = comGate();
+
+    fireEvent.change(screen.getByLabelText("Data de SUPERMERCADO BH"), {
+      target: { value: "2026-08-20" },
+    });
+    const descricao = screen.getByLabelText("Descrição de SUPERMERCADO BH");
+    fireEvent.change(descricao, { target: { value: "MERCADO" } });
+    fireEvent.blur(descricao);
+    const valor = screen.getByLabelText("Valor de SUPERMERCADO BH");
+    fireEvent.change(valor, { target: { value: "99" } });
+    fireEvent.blur(valor);
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "cat-2" } });
+    fireEvent.click(screen.getByRole("button", { name: "excluir" }));
+
+    expect(espioes.onDateChange).toHaveBeenCalledWith("tx-1", "2026-08-20");
+    expect(espioes.onDescriptionChange).toHaveBeenCalledWith("tx-1", "MERCADO");
+    expect(espioes.onAmountChange).toHaveBeenCalledWith("tx-1", 99);
+    expect(espioes.onCategoryChange).toHaveBeenCalledWith("tx-1", "cat-2");
+    expect(espioes.onDelete).toHaveBeenCalledWith("tx-1");
+  });
+
+  it("a linha bloqueada continua expansível (é leitura, não sumiço)", () => {
+    comGate();
+
+    fireEvent.click(screen.getByRole("button", { name: /Repasse aluguel/ }));
+
+    expect(screen.getByTestId("painel-itens")).toHaveTextContent("detalhamento de tx-aluguel");
+  });
+
+  it("sem isRowEditable todas as linhas são editáveis", () => {
+    render(
+      <TransactionsTable
+        transactions={[transacao(), receitaDeAluguel]}
+        categories={categorias}
+        onDateChange={vi.fn()}
+        onAmountChange={vi.fn()}
+        onDelete={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText("Data de Repasse aluguel")).toBeInTheDocument();
+    expect(screen.getByLabelText("Valor de Repasse aluguel")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "excluir" })).toHaveLength(2);
+  });
+});

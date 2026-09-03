@@ -21,6 +21,13 @@ export interface Category {
   deductsFromFreeSpend?: boolean;
   /** Sub-itens fixos criados automaticamente para transações dessa categoria (ver `transactionItems.ts`). */
   fixedSubItems?: string[];
+  /**
+   * Posição escolhida pelo usuário na tela de Categorias. A lista já chega
+   * ordenada por ela de `GET /api/categories`, então as telas só precisam
+   * renderizar na ordem recebida — o campo é opcional porque nenhuma delas
+   * precisa lê-lo (só a própria tela de Categorias, para reordenar).
+   */
+  sortOrder?: number;
 }
 
 /** Dados de um cartão de crédito cadastrado (usado para associar transações importadas de fatura). */

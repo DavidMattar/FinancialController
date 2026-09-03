@@ -374,7 +374,23 @@ describe("backupFileSchema", () => {
       expect(r.data.data.categories[0].keywords).toEqual([]);
       expect(r.data.data.categories[0].fixedSubItems).toEqual([]);
       expect(r.data.data.categories[0].deductsFromFreeSpend).toBe(false);
+      // Arquivo gerado antes da coluna de ordem existir: 0 em todas devolve a
+      // lista à ordem alfabética, que é o que aquele backup descrevia.
+      expect(r.data.data.categories[0].sortOrder).toBe(0);
     }
+  });
+
+  it("preserva a ordem das categorias gravada no arquivo", () => {
+    // Sem o campo no schema o zod DESCARTARIA a chave e a restauração perderia
+    // a ordem escolhida pelo usuário — perda silenciosa no arquivo que existe
+    // justamente para não perder dado.
+    const data = dataVazia();
+    data.categories = [{ ...registros.categories, sortOrder: 7 }];
+
+    const r = backupFileSchema.safeParse(arquivo(data));
+
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.data.categories[0].sortOrder).toBe(7);
   });
 
   it("aceita campos nulos onde o schema permite", () => {

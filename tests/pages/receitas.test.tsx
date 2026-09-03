@@ -5,8 +5,23 @@ import { normalizarEspacos as norm } from "../helpers/text";
 vi.mock("@/components/SeasonalRentalsSection", () => ({
   default: () => <div data-testid="secao-alugueis">aluguéis de temporada</div>,
 }));
+/**
+ * A tabela é dublada por um painel de botões, um por callback que a página
+ * passa: o que se testa aqui é o que a PÁGINA faz quando a tabela avisa uma
+ * edição (corpo do PATCH, releitura, diálogo de exclusão) — a tabela em si tem
+ * os próprios testes. `editavel-<id>` expõe o resultado do `isRowEditable`
+ * que a página monta, que é a regra do "Aluguel Rancho".
+ */
 vi.mock("@/components/TransactionsTable", () => ({
-  default: ({ transactions, onCategoryChange }: any) => (
+  default: ({
+    transactions,
+    onCategoryChange,
+    onDateChange,
+    onDescriptionChange,
+    onAmountChange,
+    onDelete,
+    isRowEditable,
+  }: any) => (
     <div data-testid="tabela">
       <span>{transactions.length} receitas</span>
       <button type="button" onClick={() => onCategoryChange("tx-1", "cat-2")}>
@@ -15,6 +30,23 @@ vi.mock("@/components/TransactionsTable", () => ({
       <button type="button" onClick={() => onCategoryChange("tx-1", null)}>
         limpar categoria
       </button>
+      <button type="button" onClick={() => onDateChange("tx-1", "2026-08-20")}>
+        trocar data
+      </button>
+      <button type="button" onClick={() => onDescriptionChange("tx-1", "SALARIO NOVO")}>
+        trocar descrição
+      </button>
+      <button type="button" onClick={() => onAmountChange("tx-1", 4321.5)}>
+        trocar valor
+      </button>
+      <button type="button" onClick={() => onDelete("tx-1")}>
+        pedir exclusão
+      </button>
+      {transactions.map((t: any) => (
+        <span key={t.id} data-testid={`editavel-${t.id}`}>
+          {String(isRowEditable(t))}
+        </span>
+      ))}
     </div>
   ),
 }));
@@ -249,5 +281,175 @@ describe("página /receitas", () => {
     render(<ReceitasPage />);
 
     await waitFor(() => expect(norm(document.body.textContent)).toContain(norm("-R$ 350,00")));
+  });
+});
+
+describe("página /receitas — edição dos lançamentos", () => {
+  /** Uma receita comum (editável) e a receita auto-criada por um aluguel. */
+  const salario = {
+    id: "tx-1",
+    description: "SALARIO",
+    amount: "5000.00",
+    category: { id: "cat-1", name: "Salário" },
+  };
+  const receitaDeAluguel = {
+    id: "tx-2",
+    description: "Repasse aluguel de temporada",
+    amount: "1000.00",
+    category: { id: "cat-9", name: "Aluguel Rancho" },
+  };
+
+  /** O corpo JSON da última escrita feita pela página. */
+  function ultimaEscrita() {
+    const chamadas = fetchMock.mock.calls.filter((c) => c[1]?.method);
+    return chamadas[chamadas.length - 1];
+  }
+
+  it("libera a edição das receitas comuns", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+
+    await waitFor(() => expect(screen.getByTestId("editavel-tx-1")).toHaveTextContent("true"));
+  });
+
+  it("bloqueia a edição das receitas da categoria Aluguel Rancho", async () => {
+    // O valor dessas linhas é o "Total David" calculado pelo aluguel: quem
+    // manda nelas é o modal de aluguel, não o ledger.
+    comDados([salario, receitaDeAluguel]);
+
+    render(<ReceitasPage />);
+
+    await waitFor(() => expect(screen.getByTestId("editavel-tx-2")).toHaveTextContent("false"));
+    expect(screen.getByTestId("editavel-tx-1")).toHaveTextContent("true");
+  });
+
+  it("libera a edição de receita sem categoria", async () => {
+    comDados([{ id: "tx-1", description: "PIX RECEBIDO", amount: "100.00", category: null }]);
+
+    render(<ReceitasPage />);
+
+    await waitFor(() => expect(screen.getByTestId("editavel-tx-1")).toHaveTextContent("true"));
+  });
+
+  it("grava a nova data por PATCH", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "trocar data" }));
+
+    await waitFor(() => {
+      const [url, init] = ultimaEscrita();
+      expect(url).toBe("/api/transactions/tx-1");
+      expect(init.method).toBe("PATCH");
+      expect(JSON.parse(init.body)).toEqual({ date: "2026-08-20" });
+    });
+  });
+
+  it("grava a nova descrição por PATCH", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "trocar descrição" }));
+
+    await waitFor(() =>
+      expect(JSON.parse(ultimaEscrita()[1].body)).toEqual({ description: "SALARIO NOVO" }),
+    );
+  });
+
+  it("grava o novo valor por PATCH", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "trocar valor" }));
+
+    await waitFor(() => expect(JSON.parse(ultimaEscrita()[1].body)).toEqual({ amount: 4321.5 }));
+  });
+
+  it("relê os lançamentos E o resumo depois de editar (o 15/10/75 muda com a receita)", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    const antes = fetchMock.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "trocar valor" }));
+
+    // PATCH + as três rotas da releitura.
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(antes + 4));
+    expect(ultimaChamada("/api/budget/summary")).toBe(
+      "/api/budget/summary?from=2026-08-01&to=2026-08-31",
+    );
+  });
+
+  it("a releitura de depois da edição não troca a tabela por 'Carregando...'", async () => {
+    // Ligar o loading remontaria o campo que acabou de ser editado e fecharia
+    // o detalhamento aberto — barulho visual a cada Enter.
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.click(screen.getByRole("button", { name: "trocar valor" }));
+
+    expect(screen.queryByText("Carregando...")).not.toBeInTheDocument();
+    expect(screen.getByTestId("tabela")).toBeInTheDocument();
+  });
+});
+
+describe("página /receitas — exclusão de lançamento", () => {
+  const salario = {
+    id: "tx-1",
+    description: "SALARIO",
+    amount: "5000.00",
+    category: { id: "cat-1", name: "Salário" },
+  };
+
+  it("pede confirmação antes de excluir, mostrando descrição e valor", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+
+    fireEvent.click(screen.getByRole("button", { name: "pedir exclusão" }));
+
+    expect(screen.getByText("Excluir receita")).toBeInTheDocument();
+    expect(norm(document.body.textContent)).toContain(norm('Excluir "SALARIO" de R$ 5.000,00?'));
+    // Nada foi enviado antes da confirmação.
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method)).toHaveLength(0);
+  });
+
+  it("cancelar fecha o diálogo sem excluir", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "pedir exclusão" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    expect(screen.queryByText("Excluir receita")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.filter((c) => c[1]?.method)).toHaveLength(0);
+  });
+
+  it("confirmar exclui e relê a tela", async () => {
+    comDados([salario]);
+
+    render(<ReceitasPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "pedir exclusão" }));
+    const antes = fetchMock.mock.calls.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Excluir" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/transactions/tx-1", { method: "DELETE" }),
+    );
+    // DELETE + as três rotas da releitura (o total do mês mudou).
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBe(antes + 4));
+    expect(screen.queryByText("Excluir receita")).not.toBeInTheDocument();
   });
 });

@@ -88,6 +88,12 @@ model Category {
   /// Se true, o valor dessa categoria é subtraído do "disponível para gastar"
   /// mesmo sendo uma despesa fixa/planejada (ver regra do orçamento 15/10/75).
   deductsFromFreeSpend Boolean   @default(false)
+  /// Posição escolhida pelo usuário na tela de Categorias (setas ↑/↓). É a
+  /// ordem em que as categorias aparecem em TODA lista do app, porque
+  /// GET /api/categories ordena por ela e o nome só serve de desempate.
+  /// Zero é o padrão de quem nunca foi ordenado — e devolve a lista à ordem
+  /// alfabética, que era o comportamento antes desta coluna existir.
+  sortOrder    Int               @default(0)
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
   transactions Transaction[]

@@ -766,3 +766,198 @@ describe("página /transacoes — mover para Transações Família", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
   });
 });
+
+describe("página /transacoes — continuar lançando", () => {
+  const CONTINUAR = /Continuar lançando/;
+
+  /** Abre o formulário de nova transação com a lista já carregada. */
+  async function abrirFormulario() {
+    comDados();
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "+ Nova transação" }));
+  }
+
+  /** Preenche descrição e valor e envia o formulário. */
+  function lancar(descricao: string, valor: string) {
+    fireEvent.change(campoPorRotulo("Descrição"), { target: { value: descricao } });
+    fireEvent.change(campoPorRotulo("Valor"), { target: { value: valor } });
+    fireEvent.submit(document.querySelectorAll("form")[0]);
+  }
+
+  /** Os corpos JSON de todos os POSTs feitos até agora. */
+  function lancamentosEnviados() {
+    return fetchMock.mock.calls
+      .filter((c) => c[1]?.method === "POST")
+      .map((c) => JSON.parse(String(c[1].body)));
+  }
+
+  it("o checkbox começa desmarcado (salvar fecha, como antes)", async () => {
+    await abrirFormulario();
+
+    expect(screen.getByRole("checkbox", { name: CONTINUAR })).not.toBeChecked();
+  });
+
+  it("marcado, o formulário continua aberto depois de salvar", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(lancamentosEnviados()).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
+
+  it("limpa descrição e valor, mas mantém data, tipo e categoria", async () => {
+    // Quem lança várias seguidas costuma estar no mesmo dia/categoria —
+    // reescrever isso a cada linha anularia o ganho do checkbox.
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+    fireEvent.change(campoPorRotulo("Data"), { target: { value: "2026-08-10" } });
+    fireEvent.change(campoPorRotulo("Categoria"), { target: { value: "cat-1" } });
+    fireEvent.change(campoPorRotulo("Tipo"), { target: { value: "PAYMENT" } });
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(campoPorRotulo("Descrição")).toHaveValue(""));
+    expect(campoPorRotulo("Valor")).toHaveValue("");
+    expect(campoPorRotulo("Data")).toHaveValue("2026-08-10");
+    expect(campoPorRotulo("Categoria")).toHaveValue("cat-1");
+    expect(campoPorRotulo("Tipo")).toHaveValue("PAYMENT");
+  });
+
+  it("desmarca 'verificar devolução' a cada lançamento", async () => {
+    // É marca de um item específico, não da sessão de lançamento: herdar isso
+    // no próximo lançaria uma pendência que ninguém pediu.
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Verificar devolução/ }));
+
+    lancar("COMPRA ONLINE", "80");
+
+    await waitFor(() => expect(lancamentosEnviados()[0].pendingReturn).toBe(true));
+    expect(screen.getByRole("checkbox", { name: /Verificar devolução/ })).not.toBeChecked();
+  });
+
+  it("o checkbox continua marcado para o lançamento seguinte", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(campoPorRotulo("Descrição")).toHaveValue(""));
+    expect(screen.getByRole("checkbox", { name: CONTINUAR })).toBeChecked();
+  });
+
+  it("devolve o foco para a descrição, pronto para o próximo", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(document.activeElement).toBe(campoPorRotulo("Descrição")));
+  });
+
+  it("lança várias seguidas sem reabrir o formulário", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+    await waitFor(() => expect(campoPorRotulo("Descrição")).toHaveValue(""));
+    lancar("FARMACIA", "30");
+    await waitFor(() => expect(lancamentosEnviados()).toHaveLength(2));
+    lancar("POSTO", "100");
+    await waitFor(() => expect(lancamentosEnviados()).toHaveLength(3));
+
+    expect(lancamentosEnviados().map((l) => [l.description, l.amount])).toEqual([
+      ["PADARIA", 12.5],
+      ["FARMACIA", 30],
+      ["POSTO", 100],
+    ]);
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
+
+  it("conta os lançamentos salvos (o formulário aberto esconde a lista)", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+    await waitFor(() => expect(screen.getByText("✓ 1 lançamento salvo")).toBeInTheDocument());
+
+    lancar("FARMACIA", "30");
+    await waitFor(() => expect(screen.getByText("✓ 2 lançamentos salvos")).toBeInTheDocument());
+  });
+
+  it("recarrega a lista mesmo com o formulário aberto", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+    const antes = fetchMock.mock.calls.filter((c) => !c[1]?.method).length;
+
+    lancar("PADARIA", "12,50");
+
+    // O lançamento novo tem que aparecer atrás do formulário que ficou aberto.
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.filter((c) => !c[1]?.method).length).toBeGreaterThan(antes),
+    );
+  });
+
+  it("desmarcado, salvar fecha o formulário (comportamento de antes)", async () => {
+    await abrirFormulario();
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Salvar" })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("reabrir o formulário começa com o checkbox desmarcado", async () => {
+    await abrirFormulario();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "+ Nova transação" }));
+
+    expect(screen.getByRole("checkbox", { name: CONTINUAR })).not.toBeChecked();
+  });
+
+  it("resposta de erro não limpa o que foi digitado nem fecha o formulário", async () => {
+    // Perder o lançamento inteiro junto com o erro é o pior desfecho possível:
+    // o pop-up global já explica a falha, e o texto fica para ser corrigido.
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return { ok: false, json: async () => ({ error: "ruim" }) };
+      if (init?.method) return { ok: true, json: async () => ({ ok: true }) };
+      if (url === "/api/categories") return { json: async () => categorias };
+      return { json: async () => [tx()] };
+    });
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "+ Nova transação" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: CONTINUAR }));
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(lancamentosEnviados()).toHaveLength(1));
+    expect(campoPorRotulo("Descrição")).toHaveValue("PADARIA");
+    expect(campoPorRotulo("Valor")).toHaveValue("12,50");
+    expect(screen.queryByText(/lançamento salvo/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
+
+  it("erro com o checkbox desmarcado também não fecha o formulário", async () => {
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") return { ok: false, json: async () => ({ error: "ruim" }) };
+      if (init?.method) return { ok: true, json: async () => ({ ok: true }) };
+      if (url === "/api/categories") return { json: async () => categorias };
+      return { json: async () => [tx()] };
+    });
+    render(<TransacoesPage />);
+    await waitFor(() => screen.getByTestId("tabela"));
+    fireEvent.click(screen.getByRole("button", { name: "+ Nova transação" }));
+
+    lancar("PADARIA", "12,50");
+
+    await waitFor(() => expect(lancamentosEnviados()).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Salvar" })).toBeInTheDocument();
+  });
+});

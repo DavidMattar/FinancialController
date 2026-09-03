@@ -83,6 +83,12 @@ const categorySchema = z.object({
   keywords: z.array(z.string()).default([]),
   fixedSubItems: z.array(z.string()).default([]),
   deductsFromFreeSpend: z.boolean().default(false),
+  // Ordem escolhida pelo usuário na tela de Categorias. Tem padrão porque
+  // arquivo gerado antes desta coluna existir não a traz — e 0 em todas
+  // devolve a lista à ordem alfabética, que é o que aquele backup descrevia.
+  // Sem o campo aqui o zod DESCARTARIA a chave e a restauração perderia a
+  // ordem de um backup que a tinha.
+  sortOrder: z.number().int().default(0),
   createdAt: isoDateTime,
   updatedAt: isoDateTime,
 });

@@ -5,7 +5,11 @@ import { prisma } from "@/lib/prisma";
 import { addDays, parseLocalDate } from "@/lib/dateOnly";
 import { computeRental } from "@/lib/rentalCalc";
 import { sanitizeNightRateOverrides } from "@/lib/rentalPriceTable";
-import { RENTAL_PLATFORM_LABEL, serializeRentalWithComputed } from "@/lib/seasonalRentals";
+import {
+  RENTAL_INCOME_CATEGORY_NAME,
+  RENTAL_PLATFORM_LABEL,
+  serializeRentalWithComputed,
+} from "@/lib/seasonalRentals";
 
 const expenseSchema = z.object({
   description: z.string().min(1),
@@ -70,7 +74,7 @@ export async function POST(request: Request) {
     include: { expenses: true },
   });
 
-  const category = await prisma.category.findFirst({ where: { name: "Aluguel Rancho" } });
+  const category = await prisma.category.findFirst({ where: { name: RENTAL_INCOME_CATEGORY_NAME } });
 
   const incomeTransaction = await prisma.transaction.create({
     data: {

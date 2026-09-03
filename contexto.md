@@ -24,10 +24,10 @@ arquivo deve responder.
 | Rota | Arquivo | O que é |
 |---|---|---|
 | `/` | `src/app/page.tsx` | Dashboard: banner de orçamento, cards de resumo, gráficos, pendências de devolução, filtros/views salvas. |
-| `/transacoes` | `src/app/transacoes/page.tsx` | CRUD de transações (ledger principal), tabela com filtros. |
+| `/transacoes` | `src/app/transacoes/page.tsx` | CRUD de transações (ledger principal), tabela com filtros. O formulário manual tem o checkbox "continuar lançando" (seção 4.15). |
 | `/transacoes-familia` | `src/app/transacoes-familia/page.tsx` | Ledger **isolado** da família (não entra em nada do resto do app). |
-| `/receitas` | `src/app/receitas/page.tsx` | Receitas de UM mês (escolhido nos seletores de mês/ano do próprio título) + seção "Aluguéis de Temporada" (colapsável). |
-| `/categorias` | `src/app/categorias/page.tsx` | CRUD de categorias (cor, ícone, palavras-chave, flags). |
+| `/receitas` | `src/app/receitas/page.tsx` | Receitas de UM mês (escolhido nos seletores de mês/ano do próprio título), editáveis/excluíveis na própria lista exceto as de "Aluguel Rancho" (seção 4.13), + seção "Aluguéis de Temporada" (colapsável). |
+| `/categorias` | `src/app/categorias/page.tsx` | CRUD de categorias (cor, ícone, palavras-chave, flags) + a ordem em que elas aparecem em todo o app (seção 4.14). |
 | `/investimentos` | `src/app/investimentos/page.tsx` | Holdings de cripto/moeda com cotação ao vivo. |
 | `/relatorios` | `src/app/relatorios/page.tsx` | Filtro de período/categorias, gráficos de tendência mensal e export CSV. No fim da página, bloco separado de **backup/restauração** do banco inteiro (seção 4.8). A regra 15/10/75 **não** fica aqui — ela é do dashboard e de `/receitas` (seção 4.1). |
 | `/importar-fatura` | `src/app/importar-fatura/page.tsx` | Duas abas: importar fatura de cartão (PDF) e nota fiscal/NFC-e (PDF ou texto colado). |
@@ -457,9 +457,10 @@ SeasonalRental ──> SeasonalRentalExpense
     mesmo que ainda carregue os campos antigos — o dado real ganha do legado.
 
 ### 4.9. Mover uma transação para o ledger da família (`POST /api/transactions/[id]/move-to-family`)
-- Botão "→ Família" por linha em `/transacoes` (só lá: no dashboard e em
-  `/receitas` a tabela é somente leitura, então `TransactionsTable` só
-  mostra o botão quando recebe `onMoveToFamily`).
+- Botão "→ Família" por linha em `/transacoes` (só lá: `TransactionsTable` só
+  mostra o botão quando recebe `onMoveToFamily`, e nem o dashboard nem
+  `/receitas` passam esse callback — mover é decisão do ledger principal, não
+  da tela de receitas, que edita as linhas dela mas não as tira do lugar).
 - É **movimentação, não cópia**: cria a `FamilyTransaction` e apaga a
   `Transaction`, as duas coisas na MESMA transação do Postgres — sem isso
   uma falha no meio deixaria o lançamento nos dois ledgers ou em nenhum.
@@ -581,10 +582,12 @@ a coluna de categoria já usava ali e que a coluna "Descrição" de
 `/investimentos` usa (seção 4.7). Nenhuma rota nova: as três edições são o
 MESMO `PATCH /api/transactions/[id]`, que já aceitava `date` e `description`.
 
-- **Só `/transacoes` edita.** `TransactionsTable` libera cada coluna por um
-  callback próprio (`onDateChange`, `onDescriptionChange`), como já fazia com
-  `onCategoryChange` e `onDelete`: no dashboard e em `/receitas` a tabela
-  continua somente de leitura porque essas telas não passam os callbacks.
+- **Cada tela libera a edição que faz sentido nela.** `TransactionsTable` abre
+  cada coluna por um callback próprio (`onDateChange`, `onDescriptionChange`),
+  como já fazia com `onCategoryChange` e `onDelete`: no dashboard a tabela
+  continua somente de leitura porque ele não passa nenhum callback. Desde
+  2026-09-03 `/receitas` também edita (seção 4.13), com um gate por linha; a
+  descrição desta seção é o mecanismo que as duas telas compartilham.
 - **A data grava na hora da mudança**, sem estado intermediário: o
   `<input type="date">` só dispara `onChange` com uma data completa. Campo
   **limpo é ignorado** — a transação precisa de uma data, e apagar não é uma
@@ -636,6 +639,129 @@ MESMO `PATCH /api/transactions/[id]`, que já aceitava `date` e `description`.
   campo: a data chega como ISO completo e é lida no calendário **local**, nunca
   por `slice(0, 10)` — a meia-noite local gravada num fuso à frente de UTC sai
   como o dia anterior na parte UTC da string (armadilha 2 da seção 5).
+
+### 4.13. Editar e excluir receitas em `/receitas` (exceto "Aluguel Rancho")
+
+A lista de lançamentos de `/receitas` passou a ser editável (categoria, data,
+descrição, **valor** e excluir), reusando a mesma `TransactionsTable` e o mesmo
+`PATCH /api/transactions/[id]` de `/transacoes` (seção 4.12) — nenhuma rota
+nova. Duas coisas são novas de verdade:
+
+- **Coluna "Valor" editável** (`onAmountChange` + `AmountCell` na
+  `TransactionsTable`). É `<input type="text" inputMode="decimal">` e passa por
+  `parseDecimalInput`, como todo campo financeiro (seção 6); o callback recebe
+  **número**, já convertido pela célula. Valor ilegível, zero ou negativo é
+  **revertido** para o atual em vez de enviado — a rota exige
+  `z.number().positive()`, e devolver o valor anterior é mais honesto do que
+  mandar algo que já se sabe que a API recusa (mesma regra da descrição em
+  branco). Depois de gravar, o campo mostra o valor **já formatado a partir do
+  número interpretado**: digitar `1.000` deixa `1,00` na célula. É o serviço do
+  `ParsedValueHint` (seção 4.11) prestado dentro da própria célula — um eco por
+  linha dobraria a altura da tabela.
+- **Gate por linha (`isRowEditable`)**, um predicado só que a tela passa para a
+  tabela e que vale para as cinco ações (categoria, data, descrição, valor,
+  excluir). É um predicado, e não um por coluna, porque a pergunta é uma só:
+  "esta linha pertence a outro sistema?". Sem o prop, todas as linhas são
+  editáveis — o comportamento de `/transacoes`, que não o passa.
+
+**Por que "Aluguel Rancho" é somente leitura** (`isReceitaEditavel` na página):
+essas linhas são a `Transaction` auto-criada por um aluguel de temporada, e o
+valor delas **é** o `totalDavid` calculado pelo aluguel (seção 4.2). Editar o
+aluguel já reescreve valor, data e descrição da transação vinculada, então
+deixar o ledger mexer nela daria dois donos para o mesmo número — e o aluguel
+ganharia na próxima edição, apagando o que foi digitado, sem aviso. Excluir
+seria pior: o aluguel ficaria com `transactionId` órfão e a receita dele
+desapareceria do mês. A linha **continua listada** (é receita do mês e entra nos
+15/10/75 como qualquer outra); quem manda nela é o botão "editar" do próprio
+aluguel.
+
+- O teste é pelo **nome da categoria**, não por `source: "IMPORT"` — fatura de
+  cartão e NFC-e também são importadas e não têm nada a ver com isso. O nome
+  vive em `RENTAL_INCOME_CATEGORY_NAME` (`src/lib/seasonalRentals.ts`), num
+  lugar só, porque a rota que cria a receita e a tela que a bloqueia precisam
+  concordar: se divergissem, a receita de aluguel voltaria a ser editável no
+  ledger.
+- **Aqui a releitura é da tela inteira**, ao contrário de `/transacoes`, que
+  atualiza só a linha editada (seção 4.12): mudar valor ou data de uma receita
+  muda o total do mês e com ele os quatro cards do 15/10/75, e uma data movida
+  para fora do mês tem que fazer a linha sair da lista. O que se evita é só o
+  pisca — o recarregamento de depois de uma edição **não liga o `loading`**
+  (`load(true)`), então a tabela não é trocada por "Carregando..." e o campo em
+  edição não é remontado a cada Enter.
+- A exclusão usa o `ConfirmDialog` do app, com descrição e valor na mensagem
+  (`/transacoes` usa o `window.confirm` nativo): a lista de receitas tem linhas
+  de descrição parecida ("Salário", "Salário 13º") e apagar a errada só se
+  descobre pelo total do mês mudando. O estado guarda o **id**, e a transação do
+  diálogo é buscada na lista da tela — se a linha desaparecer num
+  recarregamento, o diálogo se fecha junto.
+
+### 4.14. Ordem das categorias (`Category.sortOrder`)
+
+O usuário define na tela de Categorias, com setas ↑/↓ por linha, a ordem em que
+as categorias aparecem em **todo** o app: selects da tabela de transações,
+filtros do dashboard e de `/relatorios`, telas de importação.
+
+- **Quem ordena é `GET /api/categories`** (`orderBy: [{ sortOrder }, { name }]`)
+  — as telas só renderizam a lista na ordem em que ela chega. É o que faz uma
+  reordenação valer na interface inteira de uma vez; nenhuma tela ordena por
+  conta própria (não crie um `sort` local).
+- **O nome é o segundo critério, e isso importa:** `sortOrder` nasce 0 para
+  todas (o padrão da coluna), então antes da primeira reordenação — e numa
+  instalação nova, cujo seed não mexe no campo — a lista sai em **ordem
+  alfabética**, exatamente como saía antes desta coluna existir.
+- **Categoria nova entra no fim** (`sortOrder = max + 1` no POST). Com o padrão
+  0 ela pularia para o topo de todas as listas assim que a primeira
+  reordenação tivesse normalizado as posições em 0..n-1.
+- **A ordem é gravada inteira, por `PATCH /api/categories`** (na coleção, não em
+  `/[id]`): reordenar não é editar um campo de uma categoria — mover uma muda a
+  posição de outra. Como caminho fixo também não disputa a rota com o segmento
+  dinâmico `[id]`. O corpo (`{ order: [ids] }`) tem que trazer **todos** os ids
+  existentes, uma vez cada; subconjunto, id repetido ou desconhecido é **400**,
+  para `sortOrder` continuar sendo uma permutação de 0..n-1 sem empate nem furo
+  (a tela com lista velha vê o motivo no pop-up da seção 4.10). Os updates vão
+  numa transação do Postgres só.
+- A tela **reordena antes da resposta** do servidor (atualização otimista, como
+  o toggle dos 15%): o usuário clica a seta várias vezes seguidas para levar a
+  linha até a posição, e esperar uma ida ao servidor por clique faria a lista
+  andar com atraso.
+- No backup, `sortOrder` **precisa estar no schema zod** de `backup.ts`: o zod
+  descarta chave desconhecida, então sem o campo a restauração perderia a ordem
+  gravada no arquivo. Tem padrão 0, o que mantém restaurável o arquivo gerado
+  antes da coluna existir (e 0 em todas é a ordem alfabética que aquele arquivo
+  descrevia) — por isso o `BACKUP_FORMAT_VERSION` **não** subiu.
+
+### 4.15. "Continuar lançando" no formulário manual de `/transacoes`
+
+Checkbox no formulário de nova transação (`ManualTransactionForm`). Marcado,
+salvar **não fecha o formulário**: limpa só o que muda de um lançamento para o
+outro e devolve o foco à descrição, pronto para o próximo. Desmarcado (o
+padrão), o comportamento é o de antes — salvar fecha.
+
+Existe porque lançar várias transações seguidas é o uso normal quando se senta
+para pôr o mês em dia, e reabrir o formulário a cada linha era o incômodo.
+
+- **Quem decide é o formulário, e a página obedece:** o `onCreated` passou a
+  receber `keepOpen`, e a página só fecha se ele for falso. A lista **recarrega
+  nos dois casos** — o lançamento novo tem que aparecer atrás do formulário que
+  ficou aberto.
+- **Data, tipo e categoria FICAM; descrição, valor e "verificar devolução"
+  são limpos.** Quem lança várias seguidas costuma estar no mesmo dia e muitas
+  vezes na mesma categoria, e reescrever isso a cada linha anularia o ganho do
+  checkbox. Já o "verificar devolução" é marca de um item específico: herdá-lo
+  criaria uma pendência que ninguém pediu.
+- **O checkbox continua marcado** entre lançamentos, mas o estado vive no
+  formulário — reabrir depois de fechar começa desmarcado, porque a decisão é
+  sobre a sessão de lançamento que acabou.
+- **O foco volta para a descrição** (uma `ref`), senão "continuar lançando"
+  ainda exigiria um clique por transação.
+- **Contador "✓ N lançamentos salvos"** ao lado do botão. Com o formulário
+  aberto, "salvou?" deixa de ser óbvio: o formulário cobre a lista que acabou de
+  mudar, e campos limpos são o mesmo estado visual de um formulário que nunca
+  foi enviado.
+- **Resposta fora de 2xx não limpa nem fecha nada** (mudança que vale para os
+  dois modos): antes, um POST recusado fechava o formulário e levava o
+  lançamento digitado com ele. O pop-up global (seção 4.10) já explica a falha,
+  e o texto fica na tela para ser corrigido — mesma postura da seção 4.12.
 
 ## 5. Convenções e armadilhas técnicas (ver detalhe completo em `instaladorParaIA.md` seção 5)
 
@@ -798,7 +924,7 @@ src/app/
   api/
     transactions/                         → CRUD + metrics + export + items (sub-itens)
     transactions/[id]/move-to-family/     → move a transação para o ledger da família (seção 4.9)
-    categories/                           → CRUD de categorias
+    categories/                           → CRUD de categorias + PATCH da coleção que regrava a ordem (seção 4.14)
     credit-cards/                         → CRUD de cartões
     invoices/{parse,confirm}/             → importação de fatura (2 etapas)
     receipts/{parse,confirm}/             → importação de NFC-e (2 etapas)
@@ -862,7 +988,7 @@ src/lib/
   rentalPriceTable.ts                     → tabela de preços + calendário de feriados + detalhamento por noite (computeNightRates) e diárias customizadas (sanitizeNightRateOverrides)
   rentalCalc.ts                           → fórmulas de repasse (computeRental)
   rentalSettlements.ts                    → previewSettlement/createSettlement (David/Família)
-  seasonalRentals.ts                      → serializeRentalWithComputed/RENTAL_PLATFORM_LABEL (compartilhado entre as rotas de seasonal-rentals)
+  seasonalRentals.ts                      → serializeRentalWithComputed/RENTAL_PLATFORM_LABEL/RENTAL_INCOME_CATEGORY_NAME (compartilhado entre as rotas de seasonal-rentals e a tela /receitas)
   whatsappReport.ts                       → geração de relatório formatado para WhatsApp
   backup.ts                               → backup/restauração do banco inteiro em JSON (schema zod, collectBackup, restoreBackup)
 
@@ -887,7 +1013,7 @@ logs/                                     → NÃO versionado: um arquivo por ab
 
 - **Rodar:** `npm test` (uma vez), `npm run test:watch` (contínuo),
   `npm run test:coverage` (com relatório de cobertura).
-- **1695 testes** cobrindo **100% de `src/`** (statements, branches,
+- **1805 testes** cobrindo **100% de `src/`** (statements, branches,
   functions e lines). O limite de 100% está fixado em
   `coverage.thresholds` do `vitest.config.mts`: **se a cobertura cair, o
   comando falha**. Ao adicionar código novo, adicione teste junto.
@@ -924,7 +1050,7 @@ logs/                                     → NÃO versionado: um arquivo por ab
   - Formatadores passados ao Recharts (`tickFormatter`, `formatter` do
     tooltip) nunca são chamados em jsdom; eles são testados com o Recharts
     dublado em `tests/components/chartFormatters.test.tsx`.
-- **`/* v8 ignore next */` aparece em 10 pontos do `src/`**, sempre com
+- **`/* v8 ignore next */` aparece em 16 pontos do `src/`**, sempre com
   comentário explicando: são *guards de tipo* (`if (!preview) return;`,
   `prev ?? []`) cujo caminho falso a interface não consegue produzir, porque
   o controle que dispararia a função só é renderizado quando o valor já

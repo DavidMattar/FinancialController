@@ -4,6 +4,21 @@ import type { NightRateOverrides } from "./rentalPriceTable";
 /** Rótulo de exibição de cada plataforma de aluguel de temporada. */
 export const RENTAL_PLATFORM_LABEL: Record<string, string> = { AIRBNB: "Airbnb", BOOKING: "Booking" };
 
+/**
+ * Nome da categoria em que entra a receita auto-criada de cada aluguel de
+ * temporada (o "Total David"). A categoria é procurada por NOME porque a
+ * ligação entre aluguel e ledger é uma soft reference de propósito (ver o
+ * model `SeasonalRental`) — não existe FK para uma categoria fixa.
+ *
+ * Está aqui, e não escrito à mão em cada lugar, porque duas telas dependem do
+ * MESMO nome: a rota que cria a receita e a tela /receitas, que usa esse nome
+ * para NÃO deixar editar nem excluir essas linhas (elas pertencem ao aluguel,
+ * e quem manda nelas é o modal de aluguel). Se os dois divergissem, a receita
+ * de aluguel voltaria a ser editável no ledger e sairia do valor do aluguel
+ * que a gerou.
+ */
+export const RENTAL_INCOME_CATEGORY_NAME = "Aluguel Rancho";
+
 interface SeasonalRentalRecord {
   id: string;
   platform: string;

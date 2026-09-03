@@ -420,3 +420,123 @@ describe("página /categorias — casos de borda da lista", () => {
     expect(screen.getByRole("button", { name: "excluir" })).not.toBeDisabled();
   });
 });
+
+describe("página /categorias — ordenação", () => {
+  /** Três categorias na ordem em que o servidor as devolveu. */
+  function comTres() {
+    comCategorias([
+      [
+        categoria({ id: "cat-1", name: "Alimentação" }),
+        categoria({ id: "cat-2", name: "Lazer" }),
+        categoria({ id: "cat-3", name: "Vestuário" }),
+      ],
+    ]);
+  }
+
+  /** Os nomes das categorias na ordem em que aparecem na tela. */
+  function ordemNaTela(): string[] {
+    return screen
+      .getAllByRole("button", { name: /Mover .* para cima/ })
+      .map((b) => b.getAttribute("aria-label")!.replace("Mover ", "").replace(" para cima", ""));
+  }
+
+  it("explica para que serve a ordem", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+
+    await waitFor(() => screen.getByText("Lazer"));
+    expect(screen.getByText(/ordem em que as categorias aparecem/)).toBeInTheDocument();
+  });
+
+  it("mostra as setas de mover em cada linha", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+
+    await waitFor(() => screen.getByText("Lazer"));
+    expect(screen.getByRole("button", { name: "Mover Lazer para cima" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mover Lazer para baixo" })).toBeInTheDocument();
+  });
+
+  it("a primeira linha não sobe e a última não desce", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Lazer"));
+
+    expect(screen.getByRole("button", { name: "Mover Alimentação para cima" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mover Alimentação para baixo" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mover Vestuário para baixo" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mover Vestuário para cima" })).not.toBeDisabled();
+  });
+
+  it("subir uma categoria troca a posição dela com a de cima, na hora", async () => {
+    // Atualização otimista: o usuário costuma clicar a seta várias vezes para
+    // levar a linha até o lugar, e esperar o servidor a cada clique faria a
+    // lista "andar com atraso".
+    comTres();
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Lazer"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mover Lazer para cima" }));
+
+    expect(ordemNaTela()).toEqual(["Lazer", "Alimentação", "Vestuário"]);
+  });
+
+  it("descer uma categoria troca a posição dela com a de baixo", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Lazer"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mover Lazer para baixo" }));
+
+    expect(ordemNaTela()).toEqual(["Alimentação", "Vestuário", "Lazer"]);
+  });
+
+  it("grava a ordem INTEIRA num PATCH da coleção", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Lazer"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mover Vestuário para cima" }));
+
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/categories", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: ["cat-1", "cat-3", "cat-2"] }),
+      }),
+    );
+  });
+
+  it("cliques seguidos vão levando a categoria até o topo", async () => {
+    comTres();
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Vestuário"));
+
+    fireEvent.click(screen.getByRole("button", { name: "Mover Vestuário para cima" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mover Vestuário para cima" }));
+
+    expect(ordemNaTela()).toEqual(["Vestuário", "Alimentação", "Lazer"]);
+    await waitFor(() =>
+      expect(
+        JSON.parse(fetchMock.mock.calls.filter((c) => c[1]?.method === "PATCH").at(-1)![1].body),
+      ).toEqual({ order: ["cat-3", "cat-1", "cat-2"] }),
+    );
+  });
+
+  it("com uma categoria só, as duas setas ficam desabilitadas", async () => {
+    comCategorias([[categoria({ id: "cat-1", name: "Alimentação" })]]);
+
+    render(<CategoriasPage />);
+    await waitFor(() => screen.getByText("Alimentação"));
+
+    expect(screen.getByRole("button", { name: "Mover Alimentação para cima" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mover Alimentação para baixo" })).toBeDisabled();
+  });
+});

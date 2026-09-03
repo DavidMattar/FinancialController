@@ -12,12 +12,23 @@ Aplicativo web de controle financeiro pessoal, 100% local (sem login,
 sem backend em nuvem, um único usuário), com as seguintes áreas:
 
 - Dashboard (`/`) — resumo financeiro, gráficos, orçamento do mês.
-- Transações (`/transacoes`) — lançamentos manuais e importados.
+- Transações (`/transacoes`) — lançamentos manuais e importados. Data,
+  descrição e categoria são editáveis direto na linha da tabela, e o
+  formulário manual tem o checkbox **"continuar lançando"**, que mantém o
+  formulário aberto (com data/tipo/categoria preenchidos) para lançar
+  vários seguidos.
 - Transações Família (`/transacoes-familia`) — ledger **isolado** (não
   entra em relatório/orçamento algum do resto do app, de propósito).
 - Receitas (`/receitas`) — receitas do mês + seção de "Aluguéis de
-  Temporada" (Airbnb/Booking) com cálculo de repasse.
-- Categorias (`/categorias`) — CRUD de categorias.
+  Temporada" (Airbnb/Booking) com cálculo de repasse. Cada receita pode
+  ser editada (categoria, data, descrição, valor) ou excluída na própria
+  lista, **exceto** as da categoria "Aluguel Rancho": aquelas são geradas
+  e atualizadas pelo aluguel de temporada, então quem manda nelas é o
+  modal do aluguel (ver seção 4.13 do `contexto.md`).
+- Categorias (`/categorias`) — CRUD de categorias, e as setas ↑/↓ que
+  definem **a ordem em que elas aparecem em todo o app** (selects da
+  tabela de transações, filtros do dashboard e de relatórios, telas de
+  importação).
 - Investimentos (`/investimentos`) — cripto/moeda com cotação ao vivo.
   Cada ativo mostra a posição fechada e **expande** ao clicar no símbolo,
   listando o resultado de cada compra individual.
@@ -135,6 +146,13 @@ esse comando.
 > página, ou
 > `curl http://localhost:3000/api/backup/export -o backup.json`.
 > Ver seção 8.
+
+Coluna **acrescentada** com valor padrão (como `Category.sortOrder`, em
+2026-09-03) é aplicada pelo `db push` sem cerimônia: nada é perdido, e os
+registros existentes nascem com o padrão. Só não esqueça de **reiniciar o
+`next dev`** depois (armadilha 1) — o Prisma Client fica em cache no
+`globalThis` e, sem o restart, uma consulta que use a coluna nova quebra até o
+processo morrer.
 
 **Se o `db push` for remover coluna, o Prisma exige `--accept-data-loss`** —
 e, quando detecta que foi invocado por um agente de IA, **recusa o comando** e
@@ -453,7 +471,7 @@ Remove-Item -Recurse -Force .\logs
 
 ## 10. Rodar os testes
 
-O projeto tem uma suíte de **1634 testes** (Vitest + Testing Library)
+O projeto tem uma suíte de **1805 testes** (Vitest + Testing Library)
 cobrindo **100% de `src/`**. Ela não depende de banco nem de internet —
 `src/lib/prisma` e o `fetch` são substituídos por dublês —, então dá para
 rodar antes mesmo de configurar o PostgreSQL:

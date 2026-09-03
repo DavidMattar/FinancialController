@@ -7,7 +7,7 @@
  * formulário `ManualTransactionForm`, definido mais abaixo neste arquivo, e
  * mover uma transação para o ledger isolado da família.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import DateRangePicker from "@/components/DateRangePicker";
 import TransactionsTable from "@/components/TransactionsTable";
@@ -169,8 +169,12 @@ export default function TransacoesPage() {
       {showForm && (
         <ManualTransactionForm
           categories={categories}
-          onCreated={() => {
-            setShowForm(false);
+          // Quem decide se o formulário continua aberto é o checkbox
+          // "continuar lançando" DENTRO dele — a página só obedece. A lista
+          // recarrega nos dois casos: o lançamento novo tem que aparecer atrás
+          // do formulário que ficou aberto.
+          onCreated={(keepOpen) => {
+            if (!keepOpen) setShowForm(false);
             load();
           }}
         />
@@ -245,13 +249,19 @@ export default function TransacoesPage() {
  * quando o usuário clica em "+ Nova transação". Ao escolher uma categoria de
  * receita, o tipo é travado automaticamente em "Crédito" (ver `handleCategoryPick`),
  * pois não faz sentido lançar uma despesa numa categoria de receita.
+ *
+ * O checkbox "continuar lançando" existe para o caso de lançar VÁRIAS
+ * transações seguidas (o normal quando se senta para pôr o mês em dia): com ele
+ * marcado, salvar não fecha o formulário — limpa só o que muda de um
+ * lançamento para o outro e devolve o foco para a descrição, pronto para o
+ * próximo. Sem ele, o comportamento é o de antes (salvar fecha).
  */
 function ManualTransactionForm({
   categories,
   onCreated,
 }: {
   categories: Category[];
-  onCreated: () => void;
+  onCreated: (keepOpen: boolean) => void;
 }) {
   // "Verificar devolução" já na criação. Sem a trava de e-commerce que o painel
   // da transação existente usa (ver TransactionItemsPanel): na hora de lançar,
@@ -267,6 +277,17 @@ function ManualTransactionForm({
   // Valor digitado que não descreve um número: avisa na tela em vez de enviar
   // NaN (que o JSON.stringify vira null) e tomar um 400 que a tela não mostrava.
   const [amountError, setAmountError] = useState(false);
+  // "Continuar lançando": mantém o formulário aberto depois de salvar.
+  const [keepOpen, setKeepOpen] = useState(false);
+  // Quantos lançamentos já foram salvos nesta sessão do formulário. Existe
+  // porque, com o formulário aberto, "salvou?" deixa de ser óbvio: o
+  // formulário cobre a lista que acabou de mudar, e os campos limpos são o
+  // mesmo estado visual de um formulário que nunca foi enviado.
+  const [savedCount, setSavedCount] = useState(0);
+  // Para devolver o foco à descrição depois de salvar — o campo por onde todo
+  // lançamento começa. Sem isso, "continuar lançando" ainda exigiria um clique
+  // por transação, que é justamente o incômodo que o checkbox resolve.
+  const descriptionRef = useRef<HTMLInputElement>(null);
 
   const selectedCategory = categories.find((c) => c.id === categoryId);
   // Se a categoria escolhida for do tipo receita, o campo "Tipo" fica travado/desabilitado.
@@ -294,7 +315,7 @@ function ManualTransactionForm({
     setAmountError(false);
     setSubmitting(true);
     try {
-      await fetch("/api/transactions", {
+      const res = await fetch("/api/transactions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -306,7 +327,25 @@ function ManualTransactionForm({
           pendingReturn,
         }),
       });
-      onCreated();
+      // Resposta fora de 2xx não limpa nem fecha nada: o que foi digitado fica
+      // na tela para ser corrigido, em vez de sumir junto com o erro. A falha
+      // em si não fica escondida — o pop-up global cobre qualquer fetch.
+      if (!res.ok) return;
+      setSavedCount((n) => n + 1);
+      if (keepOpen) {
+        // Limpa só o que muda de um lançamento para o outro. Data, tipo e
+        // categoria FICAM: quem lança várias seguidas costuma estar lançando o
+        // mesmo dia (ou a mesma categoria), e reescrever isso a cada linha
+        // anularia o ganho do checkbox.
+        setDescription("");
+        setAmount("");
+        setPendingReturn(false);
+        // Guard de tipo: o formulário continua montado neste caminho, então a
+        // ref sempre aponta para o campo — a interface não produz o caso nulo.
+        /* v8 ignore next */
+        descriptionRef.current?.focus();
+      }
+      onCreated(keepOpen);
     } finally {
       setSubmitting(false);
     }
@@ -329,6 +368,7 @@ function ManualTransactionForm({
         <input
           type="text"
           required
+          ref={descriptionRef}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           className="border border-slate-200 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 rounded-md px-2 py-1.5 text-sm"
@@ -382,21 +422,39 @@ function ManualTransactionForm({
           ))}
         </select>
       </div>
-      <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 col-span-2 sm:col-span-4">
-        <input
-          type="checkbox"
-          checked={pendingReturn}
-          onChange={(e) => setPendingReturn(e.target.checked)}
-        />
-        Verificar devolução (item pendente de acompanhamento)
-      </label>
-      <button
-        type="submit"
-        disabled={submitting}
-        className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
-      >
-        Salvar
-      </button>
+      <div className="col-span-2 sm:col-span-4 flex flex-col gap-1">
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={pendingReturn}
+            onChange={(e) => setPendingReturn(e.target.checked)}
+          />
+          Verificar devolução (item pendente de acompanhamento)
+        </label>
+        <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={keepOpen}
+            onChange={(e) => setKeepOpen(e.target.checked)}
+            className="accent-indigo-600"
+          />
+          Continuar lançando (mantém o formulário aberto para o próximo)
+        </label>
+      </div>
+      <div className="flex flex-col gap-1 items-start">
+        <button
+          type="submit"
+          disabled={submitting}
+          className="px-3 py-1.5 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+        >
+          Salvar
+        </button>
+        {savedCount > 0 && (
+          <p className="text-xs text-emerald-600 dark:text-emerald-400">
+            ✓ {savedCount} {savedCount === 1 ? "lançamento salvo" : "lançamentos salvos"}
+          </p>
+        )}
+      </div>
     </form>
   );
 }
