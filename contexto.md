@@ -770,7 +770,8 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
 1. **Reinicie `npm run dev` por completo** depois de qualquer mudança em
    `prisma/schema.prisma` (o `PrismaClient` fica em cache no
    `globalThis` para sobreviver ao hot-reload — HMR não pega o model
-   novo).
+   novo). Esquecer isso não dá erro na hora: o app segue de pé e só a rota
+   que usa a coluna nova quebra, dias depois (armadilha 14).
 2. **Nunca `new Date("YYYY-MM-DD")` direto.** Sempre use
    `parseLocalDate` / `parseLocalDateEndOfDay` / `addDays` de
    `src/lib/dateOnly.ts` — string de data pura é interpretada como UTC
@@ -846,6 +847,40 @@ Resumo rápido — cada item já causou um bug real durante o desenvolvimento:
     o BOM entra no nome da primeira variável (`\uFEFFDATABASE_URL`), que passa
     a ser silenciosamente ignorada. Use
     `[System.IO.File]::WriteAllText(path, texto, (New-Object System.Text.UTF8Encoding($false)))`.
+14. **Um `next dev` esquecido no ar é a causa mais provável de "a alteração não
+    funcionou" — e o sintoma pode até parecer erro de tipo** (visto em
+    2026-09-03). O servidor da porta 3000 tinha sido iniciado três dias e cinco
+    commits antes, e o `PrismaClient` cacheado no `globalThis` (armadilha 1) era
+    o de antes da coluna `Category.sortOrder` existir: `GET /api/categories` —
+    a única rota que ordena por ela — devolvia **500** com a reclamação de
+    argumento desconhecido do Prisma, que chega na tela pelo pop-up da seção
+    4.10 e se lê como erro de tipo. No MESMO servidor,
+    `/api/transactions`, `/api/budget/summary` e `/api/investments` respondiam
+    200, porque não tocam a coluna nova — e é justamente esse "quase tudo
+    funciona" que faz procurar bug no lugar errado. Um `npm run dev` novo não
+    resolve: a 3000 está ocupada e o Next 16 sobe na 3001 sem falhar
+    (armadilha 9), então a aba do navegador continua sendo servida pelo
+    processo velho.
+    - **A data de criação do processo é o dado que resolve**, não a porta:
+      `Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+      Where-Object { $_.CommandLine -match 'next' } |
+      Select ProcessId, CreationDate, CommandLine`, e
+      `Get-NetTCPConnection -State Listen -LocalPort 3000,3001` para saber quem
+      atende cada porta.
+    - **A contraprova que separa "código quebrado" de "processo velho"**: rodar
+      a mesma consulta num processo NOVO (`npx tsx` com o `.env` carregado —
+      `set -a; . ./.env; set +a` no Bash, porque o `tsx` não lê `.env` sozinho)
+      mais `npx tsc --noEmit` e `npm test`. Se os três passam e só o servidor
+      no ar falha, não há nada para corrigir no repositório: é matar **os dois
+      PIDs** (o wrapper do `npm` e o `start-server.js` filho — parar só o
+      primeiro deixa a 3000 presa, mesma pegadinha da armadilha 12) e subir de
+      novo.
+    - Nesse diagnóstico **nada de dado precisou ser tocado**: o banco continuou
+      em sincronia com o schema (nenhum `db push` pendente) e nenhuma
+      categoria/transação foi perdida. `sortOrder = 0` em todas as categorias é
+      o estado esperado antes da primeira reordenação (seção 4.14), não sinal de
+      dado faltando — vale desconfiar da conclusão "vou ter que recadastrar"
+      antes de recadastrar qualquer coisa.
 
 ## 6. Padrão de código a seguir em novas features
 
